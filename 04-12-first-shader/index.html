@@ -38,7 +38,10 @@
 
     // Get the WebGL context
     const canvas = document.getElementById('canvas');
-    const gl = canvas.getContext('webgl2');
+    const gl = canvas.getContext('webgl2', {
+        alpha: true,
+        premultipliedAlpha: false,
+    });
 
     // Basic render loop wrapper.
     function setRenderLoop(callback) {
@@ -48,6 +51,20 @@
         }
         requestAnimationFrame(renderLoop);
     }
+
+    // Resize callback
+    let _resizeCallback = null;
+    canvas.addEventListener("resize", () => {
+        if (_resizeCallback)
+        {
+            _resizeCallback(canvas.clientWidth, canvas.clientHeight);
+        }
+    });
+    function onResize(callback) {
+        _resizeCallback = callback;
+        _resizeCallback(canvas.clientWidth, canvas.clientHeight);
+    }
+
 </script>
 
 <script>
@@ -58,10 +75,10 @@
     // Define the vertex positions of a triangle as a flat buffer of 2d
     // coordinates in a space ranging from -1 to +1 in both X and Y.
     const vertexPositions = new Float32Array([
-        -.8, -.8, // bottom left
-        +.8, -.8, // bottom right
-        -.8, +.8, // top left
-        +.8, +.8, // top right
+        -1, -1, // bottom left
+        +1, -1, // bottom right
+        -1, +1, // top left
+        +1, +1, // top right
     ]);
 
     // Create the position buffer in WebGL...
@@ -89,13 +106,13 @@
 
     // Define the Vertex Shader Source, ignoring the details for now.
     const vertexShaderSource = `#version 300 es
-	precision highp float;
-	in vec2 a_pos; // <-- This is where we want our 2D coordinates to go
-	uniform mediump float u_time;
-	void main() {
- 		gl_Position = vec4(a_pos, 0.0, 1.0);
-	}
-`;
+        precision highp float;
+        in vec2 a_pos; // <-- This is where we want our 2D coordinates to go
+        uniform mediump float u_time;
+        void main() {
+            gl_Position = vec4(a_pos, 0.0, 1.0);
+        }
+        `;
 
     // Create the vertex shader object in WebGL...
     const vertexShader = gl.createShader(gl.VERTEX_SHADER);
@@ -107,15 +124,19 @@
 
     // Define the Fragment Shader Source.
     const fragmentShaderSource = `#version 300 es
-	precision mediump float;
-	uniform float u_time;
-    out vec4 o_fragColor;
-    void main() {
-        vec2 rg = gl_FragCoord.xy / 512.0;
-        float b = abs(sin(u_time / 1000.0));
-    	o_fragColor = vec4(rg, b, 1.0);
-    }
-`;
+        precision mediump float;
+        uniform float u_time;
+        uniform float u_width;
+        uniform float u_height;
+        out vec4 o_fragColor;
+        void main() {
+            float t = abs(sin(u_time / 1000.0));
+            float r = (gl_FragCoord.x / u_width);
+            float g = (gl_FragCoord.y / u_height);
+            float b = 0.0;
+            o_fragColor = vec4(r, g, b, t);
+        }
+        `;
 
     // Compile the fragment shader in WebGL.
     const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
@@ -168,7 +189,11 @@
 
     // Get the location of the uniform from the shader so we can address it
     const timeUniform = gl.getUniformLocation(shaderProgram, "u_time");
+    const widthUniform = gl.getUniformLocation(shaderProgram, "u_width");
+    const heightUniform = gl.getUniformLocation(shaderProgram, "u_height");
 
+    /// The render loop function is called every frame.
+    /// The `time` parameter contains a timestamp in milliseconds.
     function myRenderLoop(time) {
         // Update the uniform's value
         gl.uniform1f(timeUniform, time);
@@ -189,6 +214,13 @@
         }
     }
     setRenderLoop(myRenderLoop);
+
+    /// Whenever the size of the display window changes, update the width-
+    /// and height-uniforms.
+    onResize((width, height) => {
+        gl.uniform1f(widthUniform, width);
+        gl.uniform1f(heightUniform, height);
+    })
 </script>
 
 </html>
