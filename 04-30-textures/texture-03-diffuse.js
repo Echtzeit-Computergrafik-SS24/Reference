@@ -1,0 +1,321 @@
+// 1. Data ///////////////////////////////////////////////////////////////
+
+// Create an object holding various data for a sphere.
+const sphere = glance.createSphere("my-sphere", {
+    longitudeBands: 64,
+    latitudeBands: 32,
+});
+
+// Define the vertex positions of a triangle as a flat buffer of 2d
+// coordinates in a space ranging from -1 to +1 in both X and Y.
+const vertexPositions = new Float32Array(
+    glance.interleaveArrays([sphere.positions, sphere.normals, sphere.texCoords], [3, 3, 2])
+);
+
+// Create the position buffer in WebGL...
+const positionBuffer = gl.createBuffer();
+// ... bind it to the ARRAY_BUFFER target ...
+gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+// ... and upload the data to it.
+gl.bufferData(gl.ARRAY_BUFFER, vertexPositions, gl.STATIC_DRAW);
+
+
+// Face indices define triangles, the index number corresponds to
+// a vertex defined in the bound ARRAY_BUFFER target.
+const faceIndices = new Uint16Array(sphere.indices);
+
+// Upload the indices to a buffer bound on the ELEMENT_ARRAY_BUFFER
+// target.
+const indexBuffer = gl.createBuffer();
+gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
+gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, faceIndices, gl.STATIC_DRAW);
+
+// 2. Shader /////////////////////////////////////////////////////////////
+
+// Define the Vertex Shader Source, ignoring the details for now.
+const vertexShaderSource = `#version 300 es
+	precision highp float;
+
+    uniform mat4 u_modelMatrix;
+    uniform mat4 u_viewMatrix;
+    uniform mat4 u_projectionMatrix;
+
+	in vec3 a_pos;
+    in vec3 a_normal;
+    in vec2 a_texCoord;
+
+    out vec3 f_worldPos;
+    out vec3 f_normal;
+    out vec2 f_texCoord;
+    flat out vec3 f_viewPosition;
+
+    void main() {
+        vec4 worldPos = u_modelMatrix * vec4(a_pos, 1.0);
+        f_worldPos = worldPos.xyz;
+        f_viewPosition = (inverse(u_viewMatrix) * vec4(0, 0, 0, 1)).xyz;
+        f_normal = (u_modelMatrix * vec4(a_normal, 0.0)).xyz;
+        f_texCoord = a_texCoord;
+ 		gl_Position = u_projectionMatrix * u_viewMatrix * worldPos;
+	}
+`;
+
+// Create the vertex shader object in WebGL...
+const vertexShader = gl.createShader(gl.VERTEX_SHADER);
+// ... upload the source into the shader ...
+gl.shaderSource(vertexShader, vertexShaderSource);
+// ... and compile the shader. We ignore potential errors here.
+gl.compileShader(vertexShader);
+
+
+// Define the Fragment Shader Source.
+const fragmentShaderSource = `#version 300 es
+	precision mediump float;
+
+    uniform vec3 u_lightDirection;
+    uniform sampler2D u_texDiffuse;
+
+    in vec3 f_worldPos;
+    in vec3 f_normal;
+    in vec2 f_texCoord;
+    flat in vec3 f_viewPosition;
+
+	out vec4 o_fragColor;
+
+	void main() {
+        vec3 texDiffuse = texture(u_texDiffuse, f_texCoord).rgb;
+
+        vec3 normal = normalize(f_normal);
+        vec3 viewDirection = normalize(f_viewPosition - f_worldPos);
+        vec3 halfWay = normalize(viewDirection + u_lightDirection);
+
+        float ambientIntensity = 0.07;
+        vec3 ambient = vec3(ambientIntensity);
+
+        float diffuseIntensity = max(0.0, dot(normal, u_lightDirection)) * (1.0 - ambientIntensity);
+        vec3 diffuse = texDiffuse * diffuseIntensity;
+
+        float specularIntensity = pow(max(0.0, dot(normal, halfWay)), 64.0);
+        vec3 specular = vec3(specularIntensity);
+
+		o_fragColor = vec4(ambient + diffuse + specular, 1.0);
+	}
+`;
+
+// Compile the fragment shader in WebGL.
+const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
+gl.shaderSource(fragmentShader, fragmentShaderSource);
+gl.compileShader(fragmentShader);
+
+
+// In order to use them, we have to link the two shaders together into
+// a Shader Program.
+// Create one first,
+const shaderProgram = gl.createProgram();
+// attach the two shaders (the order of attachment does not matter),
+gl.attachShader(shaderProgram, vertexShader);
+gl.attachShader(shaderProgram, fragmentShader);
+// link the program, also ignoring errors
+gl.linkProgram(shaderProgram);
+// ... and tell WebGL to use the program for all future draw calls,
+// or at least until we tell it to use another program instead.
+gl.useProgram(shaderProgram);
+
+// 3. Attribute Mapping //////////////////////////////////////////////////
+
+// So far, we've given WebGL a buffer of numbers and a shader that takes
+// a vec2 as input. We now need to tell WebGL how to get the 2D
+// coordinates out of the buffer, so the shader can use them.
+
+// First, get the "attribute" (vertex shader input) location from the
+// shader, so we can address it
+const vertexAttribute = gl.getAttribLocation(shaderProgram, 'a_pos');
+// We need to enable the attribute location (ignore this for now).
+gl.enableVertexAttribArray(vertexAttribute);
+// Here we tell WebGL how it can extract the attribute from the buffer
+// bound on the ARRAY_BUFFER target.
+gl.vertexAttribPointer(
+    vertexAttribute, // We want to define the 'a_pos' attribute
+    3,               // It has three components (x, y, z)
+    gl.FLOAT,        // We are using a 32bit float to store the number
+    false,           // It is not normalized (ignore this)
+    (3 + 3 + 2) * 4, // Stride in bytes (see below)
+    0 * 4            // Offset in bytes (see below)
+);
+// The Stride is the width of a vertex in the ARRAY_BUFFER.
+// In this case we only have 2 components à 4 bytes = 8.
+// The Offset is the offset of *this* particular attribute within the
+// width of the vertex.
+// If we had two 2D attributes, the Stride would be 16 for both,
+// and the second attribute would have an Offset of 8.
+
+// The normal attribute has another location than the position-attribute.
+const normalAttribute = gl.getAttribLocation(shaderProgram, 'a_normal');
+if (normalAttribute !== -1) {
+    // We need to enable the attribute location (ignore this for now).
+    gl.enableVertexAttribArray(normalAttribute);
+    // Here we tell WebGL how it can extract the attribute from the buffer
+    // bound on the ARRAY_BUFFER target.
+    gl.vertexAttribPointer(
+        normalAttribute, // We want to define the 'a_normal' attribute
+        3,               // It has three components (r, g, b)
+        gl.FLOAT,        // We are using a 32bit float to store the number
+        false,           // It is not normalized (ignore this)
+        (3 + 3 + 2) * 4, // Stride in bytes (same as the first attribute)
+        3 * 4            // Offset in bytes
+    );
+}
+
+const texCoordAttribute = gl.getAttribLocation(shaderProgram, 'a_texCoord');
+gl.enableVertexAttribArray(texCoordAttribute);
+gl.vertexAttribPointer(
+    texCoordAttribute,
+    2,               // It has two components (u, v)
+    gl.FLOAT,        // We are using a 32bit float to store the number
+    false,           // It is not normalized (ignore this)
+    (3 + 3 + 2) * 4, // Stride in bytes (same as all attributes)
+    (3 + 3) * 4,     // offset
+);
+
+// 4. Textures ///////////////////////////////////////////////////////////
+
+// Create a new "placeholder" texture until the real one is loaded.
+const texture = gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D, texture);
+gl.texImage2D(gl.TEXTURE_2D,
+    0,               // Level
+    gl.RGBA,         // Internal format of the texture (how it is stored on the gpu).
+    1,               // The placeholder is only 1 pixel wide...
+    1,               // ... and 1 pixel high.
+    0,               // The legacy "border" parameter must always be 0.
+    gl.RGBA,         // The format of the data we use to define the texture.
+    gl.UNSIGNED_BYTE,// The data type of the texture data.
+    new Uint8Array([0, 0, 0, 255]), // The actual texture data is a single, opaque, black pixel.
+);
+
+// Create a new Javascript "Image" object, which is provided by the browser.
+let image = new Image();
+image.crossOrigin = "anonymous";    // ask for CORS permission
+// Define a callback to run when the image data has been loaded.
+// Note that this function is not executed immediately but some time in the future,
+// likely after the first frame has been drawn.
+image.onload = () =>
+{
+    // (Re-)bind the texture.
+    // We don't have any other textures in this example, but in a real-world
+    // scenario, we cannot be certain anymore, that the texture we want to
+    // define is the one currently bound.
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+
+    // Tell WebGL to flip texture data vertically when loading it.
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+
+    // Redefine the texture.
+    // You will notice that his function has fewer arguments.
+    // That is because WebGL can automatically query the size of the texture
+    // from the `image` object.
+    gl.texImage2D(gl.TEXTURE_2D,
+        0,                  // Level
+        gl.RGBA,            // internal format
+        gl.RGBA,            // (source) format
+        gl.UNSIGNED_BYTE,   // data type
+        image,              // new texture data
+    );
+    // I'll get to this in a second.
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+
+    // Afterwards, we can destroy the image object.
+    image = null;
+};
+// Load the image AFTER defining the callback, in case the load finishes before the callback
+// had a chance to be assigned (not likely but possible).
+image.src = 'https://echtzeit-computergrafik-ss24.github.io/img/test.png';
+
+// 5. Rendering //////////////////////////////////////////////////////////
+
+let pan = 0;
+let tilt = 0;
+let zoom = 3;
+
+
+// Define the variables needed to update the shader uniforms.
+const modelMatrixUniform = gl.getUniformLocation(shaderProgram, "u_modelMatrix");
+const modelMatrix = Mat4.identity();
+gl.uniformMatrix4fv(modelMatrixUniform, false, modelMatrix);
+
+// Since the projection matrix does not change, we can define it outside of
+// the render loop.
+gl.uniformMatrix4fv(
+    gl.getUniformLocation(shaderProgram, "u_projectionMatrix"), false,
+    Mat4.perspective(
+        Math.PI / 4, // fov
+        1.0, // aspect ratio
+        0.1, // near
+        5.0, // far
+    ),
+);
+
+// The view matrix is also constant, so we can define it here.
+const viewMatrixUniform = gl.getUniformLocation(shaderProgram, "u_viewMatrix");
+const viewMatrix = Mat4.fromTranslation(0, 0, -zoom);
+gl.uniformMatrix4fv(viewMatrixUniform, false, viewMatrix);
+
+// Light direction
+const lightDirectionUniform = gl.getUniformLocation(shaderProgram, "u_lightDirection");
+const lightDirection = new Vec3(1, 1, 1).normalize();
+gl.uniform3fv(lightDirectionUniform, lightDirection);
+
+// Diffuse Texture Sampler
+gl.uniform1i(gl.getUniformLocation(shaderProgram, "u_texDiffuse"), 0);
+
+
+// Enbable backface culling.
+// This only needs to happen once.
+gl.enable(gl.CULL_FACE);
+gl.cullFace(gl.BACK);
+
+
+// The render loop is called once per frame drawn to the screen.
+// @param time  The time in milliseconds since the start of the program.
+function myRenderLoop(time)
+{
+    // Always clear the canvas before drawing on it.
+    gl.clear(gl.COLOR_BUFFER_BIT);
+
+    // Update the view matrix
+    viewMatrix.reset();
+    viewMatrix.translateZ(-zoom);
+    viewMatrix.rotateX(tilt);
+    viewMatrix.rotateY(pan);
+    gl.uniformMatrix4fv(viewMatrixUniform, false, viewMatrix);
+
+    /// Draw the triangle.
+    gl.drawElements(
+        gl.TRIANGLES,       // We want to draw triangles (always use this)
+        faceIndices.length, // Draw all vertices from the index buffer
+        gl.UNSIGNED_SHORT,  // Data type used in the index buffer
+        0                   // Offset (in bytes) in the index buffer
+    );
+
+    // Stop the loop if an error occurred
+    const error = gl.getError();
+    if (error !== gl.NO_ERROR) {
+        throw new Error(`WebGL error: ${error}`);
+    }
+}
+setRenderLoop(myRenderLoop);
+
+onMouseDrag((e) =>
+{
+    const cameraSpeed = 0.007;
+    const halfPi = Math.PI / 2;
+    pan += e.movementX * cameraSpeed;
+    tilt = glance.clamp(tilt + e.movementY * cameraSpeed, -halfPi, halfPi);
+});
+
+onMouseWheel((e) =>
+{
+    const zoomSpeed = 0.2;
+    const minZoom = 1.5;
+    const maxZoom = 5;
+    zoom = glance.clamp(zoom * (1 + Math.sign(e.deltaY) * zoomSpeed), minZoom, maxZoom);
+});
