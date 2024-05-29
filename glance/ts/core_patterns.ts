@@ -8,6 +8,7 @@ export
     loadCubemap,
     loadCubemapNow,
     FramebufferStack,
+    loadCodeSnippet,
 };
 
 import
@@ -520,5 +521,20 @@ class FramebufferStack
             gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, drawBuffer?.glObject ?? null);
             gl.viewport(0, 0, width, height);
         }
+    }
+}
+
+// Internet ================================================================= //
+
+/// Loads the code snippet from the given URL.
+/// @param url URL of the code snippet.
+/// @returns The code snippet.
+async function loadCodeSnippet(url: string): Promise<string>
+{
+    try {
+        const response = await fetch(url);
+        return await response.text();
+    } catch (error) {
+        throw new Error(`Failed to load code snippet from ${url}: ${error}`);
     }
 }

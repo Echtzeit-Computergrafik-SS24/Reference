@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+
+        canvas {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+        }
+    </style>
+</head>
+
+<body>
+    <canvas id="canvas" tabindex="0"></canvas>
+</body>
+
+<script type="module">
+    // Boilerplate code ////////////////////////////////////////////////////////
+
+    import * as glance from "../glance/js/index.js";
+    const { Vec2, Vec3, Mat4 } = glance;
+
+    // Get the WebGL context
+    const canvas = document.getElementById('canvas');
+    const gl = glance.getContext(canvas);
+
+    // Basic render loop wrapper.
+    function setRenderLoop(callback) {
+        function renderLoop(time) {
+            callback(time);
+            requestAnimationFrame(renderLoop);
+        }
+        requestAnimationFrame(renderLoop);
+    }
+
+    // Resize callback
+    let _resizeCallback = null;
+    function onResizeInternal() {
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+        canvas.width = width;
+        canvas.height = height;
+        gl.viewport(0, 0, width, height);
+        if (_resizeCallback)
+        {
+            _resizeCallback(width, height);
+        }
+    }
+    onResizeInternal();
+    window.addEventListener("resize", onResizeInternal);
+    function onResize(callback) {
+        _resizeCallback = callback;
+        _resizeCallback(window.innerWidth, window.innerHeight);
+    }
+
+    // Mouse event handling
+    function onMouseDrag(callback) {
+        let isDragging = null;
+        canvas.addEventListener("mousedown", () => {
+            isDragging = true;
+        });
+        canvas.addEventListener("mousemove", (e) => {
+            if (isDragging)
+            {
+                callback(e);
+            }
+        });
+        canvas.addEventListener("mouseup", () => {
+            isDragging = false;
+        });
+    }
+
+    function onMouseWheel(callback) {
+        canvas.addEventListener("wheel", (e) => {
+            e.preventDefault();
+            callback(e);
+        });
+    }
+
+    // Keyboard event handling
+    function onKeyDown(callback) {
+        window.addEventListener("keydown", (e) => {
+            callback(e);
+        });
+    }
+    function onKeyUp(callback) {
+        window.addEventListener("keyup", (e) => {
+            callback(e);
+        });
+    }
+
+    // Game Code Start /////////////////////////////////////////////////////////
+
+    // =====================================================================
+    // Game Constants
+    // =====================================================================
+
+    const fov = Math.PI / 4;
+    const nearPlane = 0.4;
+    const farPlane = 60;
+    const cameraFocus = new Vec3(0, 0, 4);
+    const cameraSpeed = 0.007;
+    const zoomSpeed = 0.25;
+    const minZoom = 5.0;
+    const maxZoom = 30;
+    const lightDirection = new Vec3(-1, 1, -1).normalize();
+
+    const noiseScaleX = 0.5;
+    const noiseScaleY = 0.5;
+    const noiseScaleZ = 1.1;
+    const noiseSpeed = 0.0005;
+    const noiseSeed = 123;
+
+    const terrainSize = 10;
+    const dangerZone = 0.25;
+    const snowBegin = -0.3;
+    const snowFull = 0.5;
+
+    const ballRadius = 0.1;
+    const ballSpeed = 0.004;
+
+    // =====================================================================
+    // Game State
+    // =====================================================================
+
+    /// The user can orbit the camera around the world origin...
+    let pan = 0;
+    let tilt = -0.6;
+    onMouseDrag((e) => {
+        pan -= e.movementX * cameraSpeed;
+        tilt = glance.clamp(tilt - e.movementY * cameraSpeed, Math.PI / -2, Math.PI / 2);
+    });
+    /// and zoom in and out using the mouse wheel.
+    let zoom = 10.0;
+    onMouseWheel((e) => {
+        const factor = 1 + Math.sign(e.deltaY) * zoomSpeed;
+        zoom = glance.clamp(zoom * factor, minZoom, maxZoom);
+    });
+
+    /// Resizing the viewport will update the projection matrix.
+    const projectionMatrix = Mat4.perspective(fov, gl.canvas.width / gl.canvas.height, nearPlane, farPlane);
+    onResize(() => {
+        projectionMatrix.perspective(fov, gl.canvas.width / gl.canvas.height, nearPlane, farPlane);
+    });
+
+    /// The user can move a ball around the terrain.
+    let ballDelta = Vec2.zero();
+    onKeyDown((e) => {
+        if (e.key === "w")
+        {
+            ballDelta.y = Math.max(ballDelta.y - 1, -1);
+        } else if (e.key === "s")
+        {
+            ballDelta.y = Math.min(ballDelta.y + 1, 1);
+        } else if (e.key === "a")
+        {
+            ballDelta.x = Math.max(ballDelta.x - 1, -1);
+        } else if (e.key === "d")
+        {
+            ballDelta.x = Math.min(ballDelta.x + 1, 1);
+        }
+    });
+
+    onKeyUp((e) => {
+        if (e.key === "w")
+        {
+            ballDelta.y = Math.min(ballDelta.y + 1, 1);
+        } else if (e.key === "s")
+        {
+            ballDelta.y = Math.max(ballDelta.y - 1, -1);
+        } else if (e.key === "a")
+        {
+            ballDelta.x = Math.min(ballDelta.x + 1, 1);
+        } else if (e.key === "d")
+        {
+            ballDelta.x = Math.max(ballDelta.x - 1, -1);
+        }
+    });
+
+    // These variables are used by the draw calls.
+    // They will be updated in the render loop.
+    const ballPos = Vec3.zero();
+    const viewPos = Vec3.zero();
+    const viewMatrix = Mat4.identity();
+
+    // =====================================================================
+    // Skybox
+    // =====================================================================
+
+    /// This is the same skybox shader from the VAO/skybox lecture.
+    const skyboxVSSource = `#version 300 es
+        precision highp float;
+
+        uniform mat4 u_viewMatrix;
+        uniform mat4 u_projectionMatrix;
+
+        in vec3 a_pos;
+
+        out vec3 f_texCoord;
+
+        void main() {
+            f_texCoord = a_pos;
+            vec4 ndcPos = u_projectionMatrix * u_viewMatrix * vec4(a_pos, 0.0);
+            gl_Position = ndcPos.xyww;
+        }
+    `;
+    const skyboxFSSource = `#version 300 es
+        precision mediump float;
+
+        uniform samplerCube u_skybox;
+
+        in vec3 f_texCoord;
+
+        out vec4 o_fragColor;
+
+        void main() {
+            o_fragColor = texture(u_skybox, f_texCoord);
+        }
+    `;
+    const skyboxShader = glance.createShader(gl,
+        "skybox-shader",
+        skyboxVSSource,
+        skyboxFSSource,
+        {
+            u_skybox: 0, // read the skybox from texture unit 0
+        }
+    );
+
+    /// Create the skybox geometry.
+    const skyboxGeo = glance.createBox("skybox-geo");
+    const skyboxIBO = glance.createIndexBuffer(gl, skyboxGeo.indices);
+    const skyboxABO = glance.createAttributeBuffer(gl, "skybox-abo", {
+        a_pos: { data: skyboxGeo.positions, height: 3 },
+    });
+    const skyboxVAO = glance.createVAO(
+        gl,
+        "skybox-vao",
+        skyboxIBO,
+        glance.buildAttributeMap(skyboxShader, [skyboxABO]),
+    );
+
+    /// Load the skybox texture.
+    const skyboxTexture = await glance.loadCubemapNow(gl, "skybox-texture", [
+        "https://echtzeit-computergrafik-ss24.github.io/img/skybox-neutral-px.png",
+        "https://echtzeit-computergrafik-ss24.github.io/img/skybox-neutral-nx.png",
+        "https://echtzeit-computergrafik-ss24.github.io/img/skybox-neutral-py.png",
+        "https://echtzeit-computergrafik-ss24.github.io/img/skybox-neutral-ny.png",
+        "https://echtzeit-computergrafik-ss24.github.io/img/skybox-neutral-pz.png",
+        "https://echtzeit-computergrafik-ss24.github.io/img/skybox-neutral-nz.png",
+    ]);
+
+    /// The draw call contains all information on how to render the skybox.
+    const skyboxDrawCall = glance.createDrawCall(gl, skyboxShader, skyboxVAO, {
+        uniforms: {
+            u_viewMatrix: () => viewMatrix,
+            u_projectionMatrix: () => projectionMatrix,
+        },
+        textures: [
+            [0, skyboxTexture], // bind the skybox texture to texture unit 0
+        ],
+        cullFace: gl.NONE,
+        depthTest: gl.LEQUAL,
+    });
+
+    // =====================================================================
+    // Ball
+    // =====================================================================
+
+    /// The ball shader is a basic Blinn-Phong shader with a single light source.
+    const ballVSSource = `#version 300 es
+        precision highp float;
+
+        uniform mat4 u_modelMatrix;
+        uniform mat4 u_viewMatrix;
+        uniform mat4 u_projectionMatrix;
+
+        in vec3 a_pos;
+        in vec3 a_normal;
+
+        out vec3 f_normal;
+        out vec3 f_worldPosition;
+
+        void main() {
+            vec4 worldPosition = u_modelMatrix * vec4(a_pos, 1.0);
+            f_worldPosition = worldPosition.xyz;
+            f_normal = (u_modelMatrix * vec4(a_normal, 0.0)).xyz;
+
+            gl_Position = u_projectionMatrix * u_viewMatrix * worldPosition;
+        }
+    `;
+    const ballFSSource = `#version 300 es
+        precision mediump float;
+
+        uniform vec3 u_viewPosition;
+        uniform vec3 u_lightDirection;
+        uniform vec3 u_color;
+
+        in vec3 f_normal;
+        in vec3 f_worldPosition;
+
+        out vec4 o_fragColor;
+
+        void main() {
+            vec3 normal = normalize(f_normal);
+            vec3 viewDirection = normalize(u_viewPosition - f_worldPosition);
+            vec3 halfWay = normalize(viewDirection + u_lightDirection);
+
+            float ambient = 0.9;
+            float diffuse = max(0.0, dot(normal, u_lightDirection)) * 1.0;
+            float specular = pow(max(0.0, dot(normal, halfWay)), 64.0) * 1.0;
+
+            o_fragColor = vec4(vec3(ambient + diffuse + specular) * u_color, 1.0);
+        }
+    `;
+    const ballShader = glance.createShader(gl, "ball-shader", ballVSSource, ballFSSource, {
+        u_lightDirection: lightDirection,
+    });
+
+    // The ball geometry is created in the same way as the skybox geometry above.
+    const ballGeo = glance.createSphere("ball-geo", { radius: ballRadius, widthSegments: 64, heightSegments: 32 });
+    const ballIBO = glance.createIndexBuffer(gl, ballGeo.indices);
+    const ballABO = glance.createAttributeBuffer(gl, "ball-abo", {
+        a_pos: { data: ballGeo.positions, height: 3 },
+        // The ball also has normals in the attribute buffer.
+        a_normal: { data: ballGeo.normals, height: 3 },
+    });
+    const ballVAO = glance.createVAO(gl, "ball-vao", ballIBO, glance.buildAttributeMap(ballShader, [ballABO]));
+
+    const ballDrawCall = glance.createDrawCall(gl, ballShader, ballVAO, {
+        uniforms: {
+            u_modelMatrix: () => Mat4.fromTranslation(ballPos),
+            u_viewMatrix: () => viewMatrix,
+            u_projectionMatrix: () => projectionMatrix,
+            u_viewPosition: () => viewPos,
+            // The ball color changes when it enters the danger zone.
+            u_color: () => (ballPos.y > dangerZone ? new Vec3(1.0, 1.0, 0.3) : new Vec3(1.0, 0.3, 0.3)),
+        },
+        cullFace: gl.BACK,
+        depthTest: gl.LESS,
+    });
+
+    // =====================================================================
+    // Terrain
+    // =====================================================================
+
+    /// If a JavaScript number happens to be an integer, it is printed like an
+    /// integer, so "1" instead of "1.0". This will break the GLSL code which makes
+    /// a hard distinction between integers and floats. To avoid this, we can use
+    /// the 'float' function to force the number to be printed as a float.
+    const float = (x) => x.toExponential();
+
+    /// Load the OpenSimplex2S noise function as a code snippet to inject into
+    /// the terrain vertex shader.
+    /// The workings of the simplex noise are not important for this lecture.
+    const openSimplex2S = await glance.loadCodeSnippet(
+        "./OpenSimplex2S.glsl"
+    );
+
+    const terrainVSSource = `#version 300 es
+        precision highp float;
+
+        uniform mat4 u_modelMatrix;
+        uniform mat4 u_viewMatrix;
+        uniform mat4 u_projectionMatrix;
+        uniform mediump float u_time;
+
+        in vec3 a_pos;
+
+        out vec3 f_normal;
+        out vec3 f_worldPosition;
+
+        // This gives us a function called 'openSimplex2SDerivatives_ImproveXY' which
+        // returns the derivatives of the noise function in the xyz and the height in w.
+        ${openSimplex2S}
+
+        void main() {
+
+            vec3 noiseSamplePos = vec3(
+                a_pos.x * ${float(noiseScaleX)},
+                a_pos.y * ${float(noiseScaleY)} + u_time * ${float(noiseSpeed)},
+                ${float(noiseSeed)});
+            vec4 noiseResult = openSimplex2SDerivatives_ImproveXY(noiseSamplePos);
+
+            vec4 worldPosition = u_modelMatrix * vec4(a_pos.xy, a_pos.z + noiseResult.w * ${float(noiseScaleZ)}, 1.0);
+
+            f_worldPosition = worldPosition.xyz;
+            f_normal = (u_modelMatrix * vec4(normalize(-noiseResult.xyz), 0.0)).xyz;
+
+            gl_Position = u_projectionMatrix * u_viewMatrix * worldPosition;
+        }
+    `;
+
+    const terrainFSSource = `#version 300 es
+        precision mediump float;
+
+        uniform float u_time;
+        uniform float u_danger;
+        uniform float u_shininess;
+        uniform float u_reflectionIntensity;
+        uniform vec3 u_viewPosition;
+        uniform vec3 u_lightDirection;
+        uniform sampler2D u_terrainTextureLow;
+        uniform sampler2D u_terrainTextureHigh;
+
+        in vec3 f_normal;
+        in vec3 f_worldPosition;
+
+        out vec4 o_fragColor;
+
+        void main() {
+            vec3 normal = normalize(f_normal);
+            vec3 viewDirection = normalize(u_viewPosition - f_worldPosition);
+            vec3 halfWay = normalize(viewDirection + u_lightDirection);
+
+            float snowness = smoothstep(${float(snowBegin)}, ${float(snowFull)}, f_worldPosition.y);
+
+            float ambient = mix(0.4, 0.7, snowness);
+            float diffuse = max(0.0, dot(normal, u_lightDirection)) * mix(1.0, 0.7, snowness);
+            float specular = pow(max(0.0, dot(normal, halfWay)), 64.0) * mix(0.2, 0.8, snowness);
+
+            vec2 texCoord  = f_worldPosition.xz - vec2(0, u_time * ${float(noiseSpeed)} / ${float(noiseScaleY)} );
+            vec3 texColorLow = texture(u_terrainTextureLow, texCoord * 0.5).rgb;
+            vec3 texColorHigh = texture(u_terrainTextureHigh, texCoord * 0.2).rgb + vec3(0.3);
+            vec3 color = mix(texColorLow, texColorHigh, snowness);
+            if(f_worldPosition.y > ${float(dangerZone)}){
+                color = mix(color, vec3(1.0, 0.2, 0.2), u_danger * 0.7);
+            }
+
+            o_fragColor = vec4(vec3(ambient + diffuse + specular) * color, 1.0);
+        }
+    `;
+    const terrainShader = glance.createShader(gl, "terrain-shader", terrainVSSource, terrainFSSource, {
+        u_modelMatrix: Mat4.identity().rotateX(Math.PI / -2),
+        u_lightDirection: lightDirection,
+        u_terrainTextureLow: 0,
+        u_terrainTextureHigh: 1,
+    });
+
+    const terrainGeo = glance.createPlane("terrain-geo", {
+        width: terrainSize,
+        height: terrainSize,
+        widthSegments: 256,
+        heightSegments: 256,
+    });
+    const terrainIBO = glance.createIndexBuffer(gl, terrainGeo.indices);
+    const terrainABO = glance.createAttributeBuffer(gl, "terrain-abo", {
+        a_pos: { data: terrainGeo.positions, height: 3 },
+    });
+    const terrainVAO = glance.createVAO(
+        gl,
+        "terrain-vao",
+        terrainIBO,
+        glance.buildAttributeMap(terrainShader, [terrainABO]),
+    );
+
+    const terrainTextureLow = await glance.loadTextureNow(gl, "https://echtzeit-computergrafik-ss24.github.io/img/aerial_grass_rock_diff_2k.webp", {
+        wrap: gl.REPEAT,
+    });
+    const terrainTextureHigh = await glance.loadTextureNow(gl, "https://echtzeit-computergrafik-ss24.github.io/img/snow_field_aerial_col_2k.webp", {
+        wrap: gl.REPEAT,
+    });
+
+    const terrainDrawCall = glance.createDrawCall(gl, terrainShader, terrainVAO, {
+        uniforms: {
+            u_time: ({ time }) => time,
+            u_viewMatrix: () => viewMatrix,
+            u_projectionMatrix: () => projectionMatrix,
+            u_viewPosition: () => viewPos,
+            // If the ball is in the danger zone, the terrain shader will highlight it.
+            u_danger: () => (ballPos.y > dangerZone ? 1 : 0),
+        },
+        textures: [
+            [0, terrainTextureLow],
+            [1, terrainTextureHigh],
+        ],
+        cullFace: gl.BACK,
+        depthTest: gl.LESS,
+    });
+
+    // =====================================================================
+    // Render Loop
+    // =====================================================================
+
+    const zeroVec = Vec3.zero();
+    const upVec = Vec3.yAxis();
+    let lastTime = -1;
+
+    setRenderLoop((time) => {
+        const deltaTime = lastTime >= 0 ? time - lastTime : 0;
+        lastTime = time;
+
+        // Update the view
+        viewPos.set(0, 0, zoom).rotateX(tilt).rotateY(pan).add(cameraFocus);
+        viewMatrix.lookAt(viewPos, cameraFocus, upVec);
+
+        // Update the ball position
+        ballPos.x += ballDelta.x * deltaTime * ballSpeed;
+        ballPos.z += ballDelta.y * deltaTime * ballSpeed + (deltaTime * noiseSpeed) / noiseScaleY;
+        ballPos.x = glance.clamp(ballPos.x, -terrainSize, terrainSize);
+        ballPos.z = glance.clamp(ballPos.z, -terrainSize, terrainSize);
+
+        // Update the ball height using the noise function.
+        const noiseSamplePos = new Vec3(
+            ballPos.x * noiseScaleX,
+            -ballPos.z * noiseScaleY + time * noiseSpeed,
+            noiseSeed,
+        );
+        const noiseResult = glance.openSimplex2SHeightmap(noiseSamplePos);
+        ballPos.y = ballRadius + noiseResult.w * noiseScaleZ;
+
+        // Perform the draw calls
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+        glance.performDrawCall(gl, ballDrawCall, time);
+        glance.performDrawCall(gl, terrainDrawCall, time);
+        glance.performDrawCall(gl, skyboxDrawCall, time);
+    });
+
+    // Game Code End ///////////////////////////////////////////////////////////
+</script>
+
+</html>

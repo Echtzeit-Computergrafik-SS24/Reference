@@ -2005,7 +2005,7 @@ function createDrawCall(gl, program, vao, options = {}) {
         enabled: options.enabled,
     };
 }
-function performDrawCall(gl, drawCall, time) {
+function performDrawCall(gl, drawCall, time, delta) {
     // Return early if the draw call is disabled.
     if (drawCall.enabled !== undefined && !drawCall.enabled(time)) {
         return;
@@ -2036,7 +2036,7 @@ function performDrawCall(gl, drawCall, time) {
                 // TODO: a logWarning(once) would be nice
                 continue;
             }
-            const newValue = updateCallback(time);
+            const newValue = updateCallback({ time });
             if (newValue === undefined) {
                 throwError(() => `The Uniform update callback for "${uniformName}" did not return a value.`);
             }

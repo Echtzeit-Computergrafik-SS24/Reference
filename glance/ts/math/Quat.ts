@@ -1,6 +1,6 @@
-import { EPSILON } from "./common";
-import type { Vec3 } from "./Vec3";
-import type { Mat3 } from "./Mat3";
+import { EPSILON } from "./common.js";
+import type { Vec3 } from "./Vec3.js";
+import type { Mat3 } from "./Mat3.js";
 
 export class Quat
 {
@@ -348,7 +348,7 @@ export class Quat
     }
 
     /// this *= other
-    public mul(other: Quat): Quat
+    public multiply(other: Quat): Quat
     {
         const ax = this.x, ay = this.y, az = this.z, aw = this.w;
         const bx = other.x, by = other.y, bz = other.z, bw = other.w;
@@ -360,7 +360,7 @@ export class Quat
     }
 
     /// this = other * this
-    public preMul(other: Quat): Quat
+    public preMultiply(other: Quat): Quat
     {
         const ax = other.x, ay = other.y, az = other.z, aw = other.w;
         const bx = this.x, by = this.y, bz = this.z, bw = this.w;

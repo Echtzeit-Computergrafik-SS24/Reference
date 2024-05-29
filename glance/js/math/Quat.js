@@ -261,7 +261,7 @@ export class Quat {
         return this;
     }
     /// this *= other
-    mul(other) {
+    multiply(other) {
         const ax = this.x, ay = this.y, az = this.z, aw = this.w;
         const bx = other.x, by = other.y, bz = other.z, bw = other.w;
         this.x = ax * bw + aw * bx + ay * bz - az * by;
@@ -271,7 +271,7 @@ export class Quat {
         return this;
     }
     /// this = other * this
-    preMul(other) {
+    preMultiply(other) {
         const ax = other.x, ay = other.y, az = other.z, aw = other.w;
         const bx = this.x, by = this.y, bz = this.z, bw = this.w;
         this.x = ax * bw + aw * bx + ay * bz - az * by;

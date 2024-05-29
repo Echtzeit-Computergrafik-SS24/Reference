@@ -1,7 +1,8 @@
-import { EPSILON } from "./common";
-import { Vec3 } from "./Vec3";
-import { Mat3 } from "./Mat3";
-import type { Quat } from "./Quat";
+import { EPSILON } from "./common.js";
+import { Vec3 } from "./Vec3.js";
+import { Mat3 } from "./Mat3.js";
+import type { Vec4 } from "./Vec4.js";
+import type { Quat } from "./Quat.js";
 
 /// A 4x4 matrix.
 /// The matrix is stored in column-major order:
@@ -70,6 +71,28 @@ export class Mat4
                 v.x, v.y, v.z, 1,
             );
         }
+    }
+
+    /// Construct a Mat4 from four Vec3s.
+    public static fromVec3s(a: Vec3, b: Vec3, c: Vec3, d: Vec3): Mat4
+    {
+        return new Mat4(
+            a.x, a.y, a.z, 0,
+            b.x, b.y, b.z, 0,
+            c.x, c.y, c.z, 0,
+            d.x, d.y, d.z, 1,
+        );
+    }
+
+    /// Construct a Mat4 from four Vec4s.
+    public static fromVec4s(a: Vec4, b: Vec4, c: Vec4, d: Vec4): Mat4
+    {
+        return new Mat4(
+            a.x, a.y, a.z, a.w,
+            b.x, b.y, b.z, b.w,
+            c.x, c.y, c.z, c.w,
+            d.x, d.y, d.z, d.w,
+        );
     }
 
     /// A 3D translation matrix with the given distance along the x-axis.
@@ -744,7 +767,7 @@ export class Mat4
     }
 
     /// this *= other
-    public mul(other: Mat4): Mat4
+    public multiply(other: Mat4): Mat4
     {
         const a00 = this.a, a01 = this.b, a02 = this.c, a03 = this.d;
         const a10 = this.e, a11 = this.f, a12 = this.g, a13 = this.h;
@@ -774,7 +797,7 @@ export class Mat4
     }
 
     /// this = other * this
-    public preMul(other: Mat4): Mat4
+    public preMultiply(other: Mat4): Mat4
     {
         const a00 = other.a, a01 = other.b, a02 = other.c, a03 = other.d;
         const a10 = other.e, a11 = other.f, a12 = other.g, a13 = other.h;

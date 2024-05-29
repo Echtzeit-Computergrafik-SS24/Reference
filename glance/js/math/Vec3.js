@@ -117,6 +117,32 @@ export class Vec3 {
     set v(value) { this.y = value; }
     get w() { return this.z; }
     set w(value) { this.z = value; }
+    /// Get the value of the given component by index.
+    getIndex(index) {
+        switch (index) {
+            case 0: return this.x;
+            case 1: return this.y;
+            case 2: return this.z;
+            default:
+                throw new Error(`Invalid Vec3 index: ${index}`);
+        }
+    }
+    /// Set the value of the given component by index.
+    setIndex(index, value) {
+        switch (index) {
+            case 0:
+                this.x = value;
+                break;
+            case 1:
+                this.y = value;
+                break;
+            case 2:
+                this.z = value;
+                break;
+            default:
+                throw new Error(`Invalid Vec3 index: ${index}`);
+        }
+    }
     /// Update this Vec3's x, y and z from the given array at the given offset.
     fromArray(array, offset = 0) {
         this.x = array[offset];
@@ -189,6 +215,13 @@ export class Vec3 {
         this.z += other.z;
         return this;
     }
+    // this += Vec3(n, n, n)
+    addAll(n) {
+        this.x += n;
+        this.y += n;
+        this.z += n;
+        return this;
+    }
     /// this = a + b
     sumOf(a, b) {
         this.x = a.x + b.x;
@@ -197,10 +230,17 @@ export class Vec3 {
         return this;
     }
     /// this -= other
-    sub(other) {
+    subtract(other) {
         this.x -= other.x;
         this.y -= other.y;
         this.z -= other.z;
+        return this;
+    }
+    /// this -= Vec3(n, n, n)
+    subtractAll(n) {
+        this.x -= n;
+        this.y -= n;
+        this.z -= n;
         return this;
     }
     /// this = a - b
@@ -211,7 +251,7 @@ export class Vec3 {
         return this;
     }
     /// this *= other
-    mul(other) {
+    multiply(other) {
         this.x *= other.x;
         this.y *= other.y;
         this.z *= other.z;
@@ -225,7 +265,7 @@ export class Vec3 {
         return this;
     }
     /// this /= other
-    div(other) {
+    divideBy(other) {
         this.x /= other.x;
         this.y /= other.y;
         this.z /= other.z;
@@ -264,6 +304,20 @@ export class Vec3 {
         this.x += other.x * scalar;
         this.y += other.y * scalar;
         this.z += other.z * scalar;
+        return this;
+    }
+    /// Component-wise modulo of this by other.
+    mod(other) {
+        this.x %= other.x;
+        this.y %= other.y;
+        this.z %= other.z;
+        return this;
+    }
+    /// Component-wise modulo of this by n.
+    modAll(n) {
+        this.x %= n;
+        this.y %= n;
+        this.z %= n;
         return this;
     }
     /// Linear interpolation between this and other.

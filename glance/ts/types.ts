@@ -495,6 +495,8 @@ export type ShaderUniform = {
 
     /// The current value of the uniform.
     value: UniformValue,
+    // TODO: rename to "lastValue", otherwise it's confusing and people try to modify it manually
+    // .. then again, maybe that's actually easier to reason about than the current system with callbacks?
 };
 
 // Shader Program =========================================================== //
@@ -626,7 +628,7 @@ export const enum DrawMode
 }
 
 /// Callback type to update a uniform value prior to a draw call.
-export type UniformUpdateCallback = (time: number) => UniformValue;
+export type UniformUpdateCallback = (args: { time: number; }) => UniformValue;
 
 /// Everything needed to define and execute a WebGL Draw Call.
 export type DrawCall = {

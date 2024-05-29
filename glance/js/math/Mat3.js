@@ -286,7 +286,7 @@ export class Mat3 {
         return this.a * (a22 * a11 - a12 * a21) + this.b * (-a22 * a10 + a12 * a20) + this.c * (a21 * a10 - a11 * a20);
     }
     /// this *= other
-    mul(other) {
+    multiply(other) {
         const a00 = this.a, a10 = this.d, a20 = this.g;
         const a01 = this.b, a11 = this.e, a21 = this.h;
         const a02 = this.c, a12 = this.f, a22 = this.i;
@@ -305,7 +305,7 @@ export class Mat3 {
         return this;
     }
     /// this = other * this
-    preMul(other) {
+    preMultiply(other) {
         const a00 = other.a, a10 = other.d, a20 = other.g;
         const a01 = other.b, a11 = other.e, a21 = other.h;
         const a02 = other.c, a12 = other.f, a22 = other.i;

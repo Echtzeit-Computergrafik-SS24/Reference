@@ -2435,7 +2435,7 @@ function createDrawCall(
     };
 }
 
-function performDrawCall(gl: WebGL2, drawCall: DrawCall, time: number)
+function performDrawCall(gl: WebGL2, drawCall: DrawCall, time: number, delta: number)
 {
     // Return early if the draw call is disabled.
     if (drawCall.enabled !== undefined && !drawCall.enabled(time)) {
@@ -2470,7 +2470,7 @@ function performDrawCall(gl: WebGL2, drawCall: DrawCall, time: number)
                 // TODO: a logWarning(once) would be nice
                 continue;
             }
-            const newValue = updateCallback(time);
+            const newValue = updateCallback({ time });
             if (newValue === undefined) {
                 throwError(() => `The Uniform update callback for "${uniformName}" did not return a value.`);
             }

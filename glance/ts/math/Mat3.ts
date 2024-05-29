@@ -1,6 +1,6 @@
-import { EPSILON } from "./common";
-import type { Vec2 } from "./Vec2";
-import type { Mat4 } from "./Mat4";
+import { EPSILON } from "./common.js";
+import type { Vec2 } from "./Vec2.js";
+import type { Mat4 } from "./Mat4.js";
 
 /// A 3x3 matrix.
 /// The matrix is stored in column-major order:
@@ -365,7 +365,7 @@ export class Mat3
     }
 
     /// this *= other
-    public mul(other: Mat3): Mat3
+    public multiply(other: Mat3): Mat3
     {
         const a00 = this.a, a10 = this.d, a20 = this.g;
         const a01 = this.b, a11 = this.e, a21 = this.h;
@@ -386,7 +386,7 @@ export class Mat3
     }
 
     /// this = other * this
-    public preMul(other: Mat3): Mat3
+    public preMultiply(other: Mat3): Mat3
     {
         const a00 = other.a, a10 = other.d, a20 = other.g;
         const a01 = other.b, a11 = other.e, a21 = other.h;

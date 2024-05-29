@@ -51,6 +51,14 @@ export class Mat4 {
             return new Mat4(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, v.x, v.y, v.z, 1);
         }
     }
+    /// Construct a Mat4 from four Vec3s.
+    static fromVec3s(a, b, c, d) {
+        return new Mat4(a.x, a.y, a.z, 0, b.x, b.y, b.z, 0, c.x, c.y, c.z, 0, d.x, d.y, d.z, 1);
+    }
+    /// Construct a Mat4 from four Vec4s.
+    static fromVec4s(a, b, c, d) {
+        return new Mat4(a.x, a.y, a.z, a.w, b.x, b.y, b.z, b.w, c.x, c.y, c.z, c.w, d.x, d.y, d.z, d.w);
+    }
     /// A 3D translation matrix with the given distance along the x-axis.
     static fromTranslationX(delta) {
         return new Mat4(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, delta, 0, 0, 1);
@@ -638,7 +646,7 @@ export class Mat4 {
             + (a02 * a13 - a03 * a12) * (a20 * a31 - a21 * a30);
     }
     /// this *= other
-    mul(other) {
+    multiply(other) {
         const a00 = this.a, a01 = this.b, a02 = this.c, a03 = this.d;
         const a10 = this.e, a11 = this.f, a12 = this.g, a13 = this.h;
         const a20 = this.i, a21 = this.j, a22 = this.k, a23 = this.l;
@@ -666,7 +674,7 @@ export class Mat4 {
         return this;
     }
     /// this = other * this
-    preMul(other) {
+    preMultiply(other) {
         const a00 = other.a, a01 = other.b, a02 = other.c, a03 = other.d;
         const a10 = other.e, a11 = other.f, a12 = other.g, a13 = other.h;
         const a20 = other.i, a21 = other.j, a22 = other.k, a23 = other.l;

@@ -246,22 +246,22 @@ function createBox(name: string, options: {
 /// Creates a 3D sphere geometry.
 /// @param name Name of the geometry.
 /// @param radius Radius of the sphere.
-/// @param longitudeBands Number of horizontal segments. [3...), default: 32.
-/// @param latitudeBands Number of vertical segments.  [2...), default: 16.
+/// @param widthSegments Number of horizontal segments. [3...), default: 32.
+/// @param heightSegments Number of vertical segments.  [2...), default: 16.
 /// @param textureXform Transformation matrix for the texture coordinates. Default: identity.
 /// @returns A sphere geometry.
 function createSphere(name: string, options: {
     radius?: number,
-    longitudeBands?: number,
-    latitudeBands?: number,
+    widthSegments?: number,
+    heightSegments?: number,
     textureXform?: Mat3,
 } = {},
 ): Geometry
 {
     // Validate the arguments.
     const radius = Math.max(0, options.radius ?? 1);
-    const longitudeBands = Math.max(3, Math.floor(options.longitudeBands ?? 32));
-    const latitudeBands = Math.max(2, Math.floor(options.latitudeBands ?? 16));
+    const widthSegments = Math.max(3, Math.floor(options.widthSegments ?? 32));
+    const heightSegments = Math.max(2, Math.floor(options.heightSegments ?? 16));
     const textureXform = options.textureXform ?? Mat3.identity();
 
     // Initialize the arrays.
@@ -272,37 +272,37 @@ function createSphere(name: string, options: {
 
     // Generate the vertex information.
     const texCoord = new Vec2();
-    for (let lat = 0; lat <= latitudeBands; lat++) {
-        const theta = lat * Math.PI / latitudeBands;
+    for (let lat = 0; lat <= heightSegments; lat++) {
+        const theta = lat * Math.PI / heightSegments;
         const sinTheta = Math.sin(theta);
         const cosTheta = Math.cos(theta);
 
         // special case for the poles
         let uOffset = 0;
         if (lat === 0) {
-            uOffset = 0.5 / longitudeBands;
-        } else if (lat === latitudeBands) {
-            uOffset = -0.5 / longitudeBands;
+            uOffset = 0.5 / widthSegments;
+        } else if (lat === heightSegments) {
+            uOffset = -0.5 / widthSegments;
         }
 
-        for (let lon = 0; lon <= longitudeBands; lon++) {
-            const phi = lon * 2 * Math.PI / longitudeBands;
+        for (let lon = 0; lon <= widthSegments; lon++) {
+            const phi = lon * 2 * Math.PI / widthSegments;
 
             const x = Math.cos(phi) * sinTheta;
             const y = cosTheta;
             const z = Math.sin(phi) * sinTheta;
 
-            texCoord.x = 1. - (lon / longitudeBands) + uOffset;
-            texCoord.y = 1. - (lat / latitudeBands);
+            texCoord.x = 1. - (lon / widthSegments) + uOffset;
+            texCoord.y = 1. - (lat / heightSegments);
             texCoord.applyMat3(textureXform);
 
             positions.push(radius * x, radius * y, radius * z);
             normals.push(x, y, z);
             texCoords.push(texCoord.x, texCoord.y);
 
-            if (lat < latitudeBands && lon < longitudeBands) {
-                const first = (lat * (longitudeBands + 1)) + lon;
-                const second = first + longitudeBands + 1;
+            if (lat < heightSegments && lon < widthSegments) {
+                const first = (lat * (widthSegments + 1)) + lon;
+                const second = first + widthSegments + 1;
                 indices.push(first, first + 1, second,);
                 indices.push(second, first + 1, second + 1);
             }
@@ -424,7 +424,7 @@ function createTorusKnot(name: string, options: {
         calculatePositionOnCurve(u + 0.01, p, q, radius, N);
 
         // calculate orthonormal basis
-        T.copy(N).sub(P1);
+        T.copy(N).subtract(P1);
         B.crossOf(T, N);
         N.crossOf(B, T);
 
@@ -448,7 +448,7 @@ function createTorusKnot(name: string, options: {
             positions.push(vertex.x, vertex.y, vertex.z);
 
             // normal (P1 is always the center/origin of the extrusion, thus we can use it to calculate the normal)
-            vertex.sub(P1).normalize();
+            vertex.subtract(P1).normalize();
             normals.push(vertex.x, vertex.y, vertex.z);
 
             // uv
@@ -752,6 +752,10 @@ function getBaricentricCoordinates(geometry: Geometry): Array<number>
 /// @param positions 3D Vertex positions.
 function removeUnusedFaces(name: string, indices: Array<number>, positions: Array<number>): void
 {
+    // TODO: this does not seem to work.
+    // See the poles of a sphere with radius 0.5, widthSegments: 64, heightSegments: 32
+    return;
+
     // Validate the arguments.
     if (positions.length % 3 !== 0) {
         throwError(() => `The positions array of "${name}" must have a length that is a multiple of 3, but it is ${positions.length}.`);
@@ -768,8 +772,8 @@ function removeUnusedFaces(name: string, indices: Array<number>, positions: Arra
     for (let i = 0; i < indices.length;) {
         // Edges of the face.
         v0.fromArray(positions, indices[i] * 3);
-        e1.fromArray(positions, indices[i + 1] * 3).sub(v0);
-        e2.fromArray(positions, indices[i + 2] * 3).sub(v0);
+        e1.fromArray(positions, indices[i + 1] * 3).subtract(v0);
+        e2.fromArray(positions, indices[i + 2] * 3).subtract(v0);
 
         // If the area of the face is zero, remove it.
         if (e1.cross(e2).lengthSq() < EPSILON) {

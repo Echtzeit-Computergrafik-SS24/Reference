@@ -89,6 +89,28 @@ export class Vec2 {
     set u(value) { this.x = value; }
     get v() { return this.y; }
     set v(value) { this.y = value; }
+    /// Get the value of the given component by index.
+    getIndex(index) {
+        switch (index) {
+            case 0: return this.x;
+            case 1: return this.y;
+            default:
+                throw new Error(`Invalid Vec2 index: ${index}`);
+        }
+    }
+    /// Set the value of the given component by index.
+    setIndex(index, value) {
+        switch (index) {
+            case 0:
+                this.x = value;
+                break;
+            case 1:
+                this.y = value;
+                break;
+            default:
+                throw new Error(`Invalid Vec2 index: ${index}`);
+        }
+    }
     /// Update this Vec2's x and y from the given array at the given offset.
     fromArray(array, offset = 0) {
         this.x = array[offset];
@@ -148,6 +170,12 @@ export class Vec2 {
         this.y += other.y;
         return this;
     }
+    // this += Vec2(n, n)
+    addAll(n) {
+        this.x += n;
+        this.y += n;
+        return this;
+    }
     /// this = a + b
     sumOf(a, b) {
         this.x = a.x + b.x;
@@ -155,9 +183,15 @@ export class Vec2 {
         return this;
     }
     /// this -= other
-    sub(other) {
+    subtract(other) {
         this.x -= other.x;
         this.y -= other.y;
+        return this;
+    }
+    /// this -= Vec2(n, n)
+    subtractAll(n) {
+        this.x -= n;
+        this.y -= n;
         return this;
     }
     /// this = a - b
@@ -167,7 +201,7 @@ export class Vec2 {
         return this;
     }
     /// this *= other
-    mul(other) {
+    multiply(other) {
         this.x *= other.x;
         this.y *= other.y;
         return this;
@@ -179,7 +213,7 @@ export class Vec2 {
         return this;
     }
     /// this /= other
-    div(other) {
+    divideBy(other) {
         this.x /= other.x;
         this.y /= other.y;
         return this;
@@ -212,6 +246,18 @@ export class Vec2 {
     addScaled(other, scalar) {
         this.x += other.x * scalar;
         this.y += other.y * scalar;
+        return this;
+    }
+    /// Component-wise modulo of this by other.
+    mod(other) {
+        this.x %= other.x;
+        this.y %= other.y;
+        return this;
+    }
+    /// Component-wise modulo of this by n.
+    modAll(n) {
+        this.x %= n;
+        this.y %= n;
         return this;
     }
     /// Linear interpolation between this and other.

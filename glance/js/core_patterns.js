@@ -1,4 +1,4 @@
-export { createShader, buildAttributeMap, combineAttributeMaps, loadTexture, loadTextureNow, loadCubemap, loadCubemapNow, FramebufferStack, };
+export { createShader, buildAttributeMap, combineAttributeMaps, loadTexture, loadTextureNow, loadCubemap, loadCubemapNow, FramebufferStack, loadCodeSnippet, };
 import { TextureDataTarget, TextureInternalFormat, TextureTarget, } from "./types.js";
 import { throwError, } from "./dev.js";
 import { createFragmentShader, createShaderProgram, createTexture, createVertexShader, updateTexture, deleteShader, } from "./core.js";
@@ -378,5 +378,18 @@ class FramebufferStack {
             gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, drawBuffer?.glObject ?? null);
             gl.viewport(0, 0, width, height);
         }
+    }
+}
+// Internet ================================================================= //
+/// Loads the code snippet from the given URL.
+/// @param url URL of the code snippet.
+/// @returns The code snippet.
+async function loadCodeSnippet(url) {
+    try {
+        const response = await fetch(url);
+        return await response.text();
+    }
+    catch (error) {
+        throw new Error(`Failed to load code snippet from ${url}: ${error}`);
     }
 }

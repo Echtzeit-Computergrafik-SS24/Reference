@@ -1,5 +1,5 @@
-import { EPSILON } from "./common";
-import type { Mat3 } from "./Mat3";
+import { EPSILON } from "./common.js";
+import type { Mat3 } from "./Mat3.js";
 
 export class Vec2
 {
@@ -133,6 +133,28 @@ export class Vec2
     get v(): number { return this.y; }
     set v(value: number) { this.y = value; }
 
+    /// Get the value of the given component by index.
+    public getIndex(index: number): number
+    {
+        switch (index) {
+            case 0: return this.x;
+            case 1: return this.y;
+            default:
+                throw new Error(`Invalid Vec2 index: ${index}`);
+        }
+    }
+
+    /// Set the value of the given component by index.
+    public setIndex(index: number, value: number): void
+    {
+        switch (index) {
+            case 0: this.x = value; break;
+            case 1: this.y = value; break;
+            default:
+                throw new Error(`Invalid Vec2 index: ${index}`);
+        }
+    }
+
     /// Update this Vec2's x and y from the given array at the given offset.
     public fromArray(array: Array<number>, offset: number = 0): Vec2
     {
@@ -213,6 +235,14 @@ export class Vec2
         return this;
     }
 
+    // this += Vec2(n, n)
+    public addAll(n: number): Vec2
+    {
+        this.x += n;
+        this.y += n;
+        return this;
+    }
+
     /// this = a + b
     public sumOf(a: Vec2, b: Vec2): Vec2
     {
@@ -222,10 +252,18 @@ export class Vec2
     }
 
     /// this -= other
-    public sub(other: Vec2): Vec2
+    public subtract(other: Vec2): Vec2
     {
         this.x -= other.x;
         this.y -= other.y;
+        return this;
+    }
+
+    /// this -= Vec2(n, n)
+    public subtractAll(n: number): Vec2
+    {
+        this.x -= n;
+        this.y -= n;
         return this;
     }
 
@@ -238,7 +276,7 @@ export class Vec2
     }
 
     /// this *= other
-    public mul(other: Vec2): Vec2
+    public multiply(other: Vec2): Vec2
     {
         this.x *= other.x;
         this.y *= other.y;
@@ -254,7 +292,7 @@ export class Vec2
     }
 
     /// this /= other
-    public div(other: Vec2): Vec2
+    public divideBy(other: Vec2): Vec2
     {
         this.x /= other.x;
         this.y /= other.y;
@@ -298,6 +336,22 @@ export class Vec2
     {
         this.x += other.x * scalar;
         this.y += other.y * scalar;
+        return this;
+    }
+
+    /// Component-wise modulo of this by other.
+    public mod(other: Vec2): Vec2
+    {
+        this.x %= other.x;
+        this.y %= other.y;
+        return this;
+    }
+
+    /// Component-wise modulo of this by n.
+    public modAll(n: number): Vec2
+    {
+        this.x %= n;
+        this.y %= n;
         return this;
     }
 
