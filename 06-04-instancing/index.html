@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+
+        canvas {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+        }
+    </style>
+</head>
+
+<body>
+    <canvas id="canvas" tabindex="0"></canvas>
+    <canvas id="hud" tabindex="0"></canvas>
+</body>
+
+<script type="module">
+    // Boilerplate code ////////////////////////////////////////////////////////
+
+    import * as glance from "../glance/js/index.js";
+    const { Vec2, Vec3, Mat4 } = glance;
+
+    // Get the WebGL context
+    const glCanvas = document.getElementById('canvas');
+    const hudCanvas = document.getElementById('hud');
+    const gl = glance.getContext(glCanvas);
+    const hud = hudCanvas.getContext('2d');
+
+    // Basic render loop wrapper.
+    function setRenderLoop(callback) {
+        function renderLoop(time) {
+            callback(time);
+            requestAnimationFrame(renderLoop);
+        }
+        requestAnimationFrame(renderLoop);
+    }
+
+    // Resize callback
+    let _resizeCallback = null;
+    function onResizeInternal() {
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+        glCanvas.width = width;
+        glCanvas.height = height;
+        hudCanvas.width = width;
+        hudCanvas.height = height;
+        gl.viewport(0, 0, width, height);
+        if (_resizeCallback)
+        {
+            _resizeCallback(width, height);
+        }
+    }
+    onResizeInternal();
+    window.addEventListener("resize", onResizeInternal);
+    function onResize(callback) {
+        _resizeCallback = callback;
+        _resizeCallback(window.innerWidth, window.innerHeight);
+    }
+
+    // Mouse event handling
+    function onMouseDrag(callback) {
+        let isDragging = null;
+        hudCanvas.addEventListener("mousedown", () => {
+            isDragging = true;
+        });
+        hudCanvas.addEventListener("mousemove", (e) => {
+            if (isDragging)
+            {
+                callback(e);
+            }
+        });
+        hudCanvas.addEventListener("mouseup", () => {
+            isDragging = false;
+        });
+    }
+
+    function onMouseWheel(callback) {
+        hudCanvas.addEventListener("wheel", (e) => {
+            e.preventDefault();
+            callback(e);
+        });
+    }
+
+    // Keyboard event handling
+    function onKeyDown(callback) {
+        window.addEventListener("keydown", (e) => {
+            callback(e);
+        });
+    }
+    function onKeyUp(callback) {
+        window.addEventListener("keyup", (e) => {
+            callback(e);
+        });
+    }
+
+    // Game Code Start /////////////////////////////////////////////////////////
+
+    // =====================================================================
+    // Constants
+    // =====================================================================
+
+    const fov = Math.PI / 4;
+    const nearPlane = 0.4;
+    const farPlane = 60;
+    const cameraSpeed = 0.007;
+    const zoomSpeed = 0.25;
+    const minZoom = 2.5;
+    const maxZoom = 30;
+    const lightDirection = new Vec3(0.3, -0.25, 1).normalize();
+
+    const earthRadius = 0.9;
+
+    const crateSize = 0.01;
+    const crateCount = 50000;
+    const crateSpeed = 0.0002;
+    const destructionRadiusSq = Math.pow(0.3, 2);
+
+    // =====================================================================
+    // Game State
+    // =====================================================================
+
+    /// The user can orbit the camera around the world origin and zoom in and out.
+    let pan = 1.0;
+    let tilt = 0;
+    let zoom = 4.5;
+
+    // These variables are used to display the fps rate
+    let lastTime = 0;
+    let averageDelta = 1000 / 60;
+
+    onKeyDown((e) =>
+    {
+        if (e.key === " ") {
+            e.preventDefault();
+            destroyCrates(lastTime);
+        }
+    });
+
+    onMouseDrag((e) =>
+    {
+        pan -= e.movementX * cameraSpeed;
+        tilt = glance.clamp(tilt - e.movementY * cameraSpeed, Math.PI / -2, Math.PI / 2);
+    });
+
+    onMouseWheel((e) =>
+    {
+        const factor = 1 + Math.sign(e.deltaY) * zoomSpeed;
+        zoom = glance.clamp(zoom * factor, minZoom, maxZoom);
+    });
+
+    /// Resizing the viewport will update the projection matrix.
+    const projectionMatrix = Mat4.perspective(fov, gl.canvas.width / gl.canvas.height, nearPlane, farPlane);
+    onResize(() =>
+    {
+        projectionMatrix.perspective(fov, gl.canvas.width / gl.canvas.height, nearPlane, farPlane);
+    });
+
+    // These variables are used by the draw calls.
+    // They are updated in the render loop.
+    const viewPos = Vec3.zero();
+    const viewMatrix = Mat4.identity();
+
+    // Array containing the IDs of the crates.
+    let crateIDs = Array.from({ length: crateCount }, (_, i) => i);
+
+    // =====================================================================
+    // Skybox
+    // =====================================================================
+    let skyboxDrawCall;
+    {
+        const skyboxVSSource = `#version 300 es
+            precision highp float;
+            uniform mat4 u_viewMatrix;
+            uniform mat4 u_projectionMatrix;
+            in vec3 a_pos;
+            out vec3 f_texCoord;
+            void main() {
+                f_texCoord = a_pos;
+                vec4 ndcPos = u_projectionMatrix * u_viewMatrix * vec4(a_pos, 0.0);
+                gl_Position = ndcPos.xyww;
+            }
+        `;
+
+        const skyboxFSSource = `#version 300 es
+            precision mediump float;
+            uniform samplerCube u_skybox;
+            in vec3 f_texCoord;
+            out vec4 o_fragColor;
+            void main() {
+                o_fragColor = texture(u_skybox, f_texCoord);
+            }
+        `;
+
+        const skyboxShader = glance.createShader(gl, "shader-skybox", skyboxVSSource, skyboxFSSource, {
+            u_skybox: 0,
+        });
+
+        const skyboxGeo = glance.createBox("skybox-geo");
+        const skyboxIBO = glance.createIndexBuffer(gl, skyboxGeo.indices);
+        const skyboxABO = glance.createAttributeBuffer(gl, "skybox-abo", {
+            a_pos: { data: skyboxGeo.positions, height: 3 },
+        });
+        const skyboxVAO = glance.createVAO(
+            gl,
+            "skybox-vao",
+            skyboxIBO,
+            glance.buildAttributeMap(skyboxShader, [skyboxABO]),
+        );
+
+        const skyboxTexture = await glance.loadCubemapNow(gl, "skybox-texture", [
+            "https://echtzeit-computergrafik-ss24.github.io/img/skybox-space-px.avif",
+            "https://echtzeit-computergrafik-ss24.github.io/img/skybox-space-nx.avif",
+            "https://echtzeit-computergrafik-ss24.github.io/img/skybox-space-py.avif",
+            "https://echtzeit-computergrafik-ss24.github.io/img/skybox-space-ny.avif",
+            "https://echtzeit-computergrafik-ss24.github.io/img/skybox-space-pz.avif",
+            "https://echtzeit-computergrafik-ss24.github.io/img/skybox-space-nz.avif",
+        ]);
+
+        skyboxDrawCall = glance.createDrawCall(gl, skyboxShader, skyboxVAO, {
+            uniforms: {
+                u_viewMatrix: () => viewMatrix,
+                u_projectionMatrix: () => projectionMatrix,
+            },
+            textures: [[0, skyboxTexture]],
+            cullFace: gl.NONE,
+            depthTest: gl.LEQUAL,
+        });
+    }
+
+    // =====================================================================
+    // Earth
+    // =====================================================================
+
+    let blinnPhongFSSource;
+    let earthDrawCall;
+    {
+        const blinnPhongVSSource = `#version 300 es
+            precision highp float;
+
+            uniform mat4 u_modelMatrix;
+            uniform mat4 u_viewMatrix;
+            uniform mat4 u_projectionMatrix;
+
+            in vec3 a_pos;
+            in vec3 a_normal;
+            in vec2 a_texCoord;
+
+            out vec3 f_normal;
+            out vec3 f_worldPos;
+            out vec2 f_texCoord;
+
+            void main() {
+                vec4 worldPosition = u_modelMatrix * vec4(a_pos, 1.0);
+                f_worldPos = worldPosition.xyz;
+                f_normal = (u_modelMatrix * vec4(a_normal, 0.0)).xyz;
+                f_texCoord = a_texCoord;
+
+                gl_Position = u_projectionMatrix * u_viewMatrix * worldPosition;
+            }
+        `;
+
+        blinnPhongFSSource = `#version 300 es
+            precision mediump float;
+
+            uniform vec3 u_viewPosition;
+            uniform vec3 u_lightDirection;
+            uniform sampler2D u_texAmbient;
+            uniform sampler2D u_texDiffuse;
+            uniform sampler2D u_texSpecular;
+
+            in vec3 f_normal;
+            in vec3 f_worldPos;
+            in vec2 f_texCoord;
+
+            out vec4 o_fragColor;
+
+            void main() {
+                // texture
+                vec3 texAmbient = texture(u_texAmbient, f_texCoord).rgb;
+                vec3 texDiffuse = texture(u_texDiffuse, f_texCoord).rgb;
+                vec3 texSpecular = texture(u_texSpecular, f_texCoord).rgb;
+
+                vec3 normal = normalize(f_normal);
+                vec3 viewDirection = normalize(u_viewPosition - f_worldPos);
+                vec3 halfWay = normalize(viewDirection + u_lightDirection);
+
+                vec3 ambient = max(vec3(0.07), texAmbient) * texDiffuse;
+                vec3 diffuse = max(0.0, dot(normal, u_lightDirection)) * texDiffuse;
+                vec3 specular = pow(max(0.0, dot(normal, halfWay)), 64.0) * texSpecular;
+
+                o_fragColor = vec4(vec3(ambient + diffuse + specular), 1.0);
+            }
+        `;
+
+        const earthShader = glance.createShader(gl, "earth-shader", blinnPhongVSSource, blinnPhongFSSource, {
+            u_lightDirection: lightDirection,
+            u_texAmbient: 0,
+            u_texDiffuse: 1,
+            u_texSpecular: 2,
+        });
+
+        const earthGeo = glance.createSphere("earth-geo", {
+            radius: earthRadius,
+            widthSegments: 64,
+            heightSegments: 32,
+        });
+        const earthIBO = glance.createIndexBuffer(gl, earthGeo.indices);
+        const earthABO = glance.createAttributeBuffer(gl, "earth-abo", {
+            a_pos: { data: earthGeo.positions, height: 3 },
+            a_normal: { data: earthGeo.normals, height: 3 },
+            a_texCoord: { data: earthGeo.texCoords, height: 2 },
+        });
+        const earthVAO = glance.createVAO(
+            gl,
+            "earth-vao",
+            earthIBO,
+            glance.buildAttributeMap(earthShader, [earthABO]),
+        );
+
+        const earthTextureAmbient = await glance.loadTextureNow(gl, "https://echtzeit-computergrafik-ss24.github.io/img/earth-ambient.avif");
+        const earthTextureDiffuse = await glance.loadTextureNow(gl, "https://echtzeit-computergrafik-ss24.github.io/img/earth-diffuse.avif");
+        const earthTextureSpecular = await glance.loadTextureNow(gl, "https://echtzeit-computergrafik-ss24.github.io/img/earth-specular.avif");
+
+        earthDrawCall = glance.createDrawCall(gl, earthShader, earthVAO, {
+            uniforms: {
+                u_modelMatrix: ({ time }) => Mat4.fromRotationY(time * 0.00005),
+                u_viewMatrix: () => viewMatrix,
+                u_projectionMatrix: () => projectionMatrix,
+                u_viewPosition: () => viewPos,
+            },
+            textures: [
+                [0, earthTextureAmbient],
+                [1, earthTextureDiffuse],
+                [2, earthTextureSpecular],
+            ],
+            cullFace: gl.BACK,
+            depthTest: gl.LESS,
+        });
+    }
+
+    // =====================================================================
+    // Crate
+    // =====================================================================
+
+    const instancedVSSource = `#version 300 es
+        precision highp float;
+
+        uniform float u_instanceCount;
+        uniform float u_time;
+        uniform mat4 u_viewMatrix;
+        uniform mat4 u_projectionMatrix;
+
+        in float a_instanceId;
+        in vec3 a_pos;
+        in vec3 a_normal;
+        in vec2 a_texCoord;
+
+        out vec3 f_normal;
+        out vec3 f_worldPos;
+        out vec2 f_texCoord;
+
+        const float phi = 2.399963229728653;
+
+        // This is called a "Fibonacci Sphere" distribution.
+        vec3 initial_position(float id) {
+            float y = 1.0 - (id / max(1.0, u_instanceCount - 1.0)) * 2.0;   // -1 to 1
+            float radius = sqrt(1.0 - y * y);                               // radius at y
+            float angle = id * phi;                                         // angle around the sphere
+            return vec3(radius * cos(angle), y, radius * sin(angle));
+        }
+
+        float random(float seed) {
+            return fract(sin(seed)* 1.5453);
+        }
+
+        float randomRange(float seed, float min, float max) {
+            return min + random(seed) * (max - min);
+        }
+
+        vec3 randomAxis(float seed) {
+            return normalize(vec3(
+                randomRange(seed + 0.0, -1.0, 1.0),
+                randomRange(seed + 1.0, -1.0, 1.0),
+                randomRange(seed + 2.0, -1.0, 1.0)
+            ));
+        }
+
+        mat4 rotationMatrix(vec3 axis, float angle) {
+            float c = cos(angle);
+            vec3 t = axis * (1.0 - c);
+            vec3 s = axis * sin(angle);
+            return mat4(
+                axis * t.xxx + vec3(c, s.z, -s.y), 0,
+                axis * t.yyy + vec3(-s.z, c, s.x), 0,
+                axis * t.zzz + vec3(s.y, -s.x, c), 0,
+                0, 0, 0, 1
+            );
+        }
+
+        void main() {
+            float u_id = float(a_instanceId);
+            vec3 start = initial_position(u_id);
+            vec3 axis = normalize(cross(randomAxis(u_id), start));
+            float angle = u_time * ${crateSpeed} * randomRange(u_id, 0.3, 1.0);
+            mat4 rotation = rotationMatrix(axis, angle);
+
+            vec4 worldPosition = rotation * vec4(start + a_pos, 1.0);
+            f_worldPos = worldPosition.xyz;
+            f_normal = (rotation * vec4(a_normal, 0.0)).xyz;
+            f_texCoord = a_texCoord;
+
+            gl_Position = u_projectionMatrix * u_viewMatrix * worldPosition;
+        }
+    `;
+
+    const crateShader = glance.createShader(gl, "crate-shader", instancedVSSource, blinnPhongFSSource, {
+        u_lightDirection: lightDirection,
+        u_instanceCount: crateCount,
+        u_texAmbient: 0,
+        u_texDiffuse: 1,
+        u_texSpecular: 2,
+    });
+
+    const crateGeo = glance.createBox("crate-geo", { width: crateSize, height: crateSize, depth: crateSize });
+    const crateIBO = glance.createIndexBuffer(gl, crateGeo.indices);
+    const crateABO = glance.createAttributeBuffer(gl, "crate-abo", {
+        a_pos: { data: crateGeo.positions, height: 3 },
+        a_normal: { data: crateGeo.normals, height: 3 },
+        a_texCoord: { data: crateGeo.texCoords, height: 2 },
+    });
+    const crateIABO = glance.createAttributeBuffer(gl, "crate-iabo", {
+        a_instanceId: { data: crateIDs, height: 1, divisor: 1 },
+    });
+
+    const crateVAO = glance.createVAO(
+        gl,
+        "crate-vao",
+        crateIBO,
+        glance.buildAttributeMap(crateShader, [crateABO, crateIABO]),
+    );
+
+    const crateTextureAmbient = await glance.loadTextureNow(gl, "https://echtzeit-computergrafik-ss24.github.io/img/wood-ambient.avif");
+    const crateTextureDiffuse = await glance.loadTextureNow(gl, "https://echtzeit-computergrafik-ss24.github.io/img/wood-diffuse.avif");
+    const crateTextureSpecular = await glance.loadTextureNow(gl, "https://echtzeit-computergrafik-ss24.github.io/img/wood-specular.avif");
+
+    const crateDrawCall = glance.createDrawCall(gl, crateShader, crateVAO, {
+        uniforms: {
+            u_time: ({ time }) => time,
+            u_viewMatrix: () => viewMatrix,
+            u_projectionMatrix: () => projectionMatrix,
+            u_viewPosition: () => viewPos,
+        },
+        textures: [
+            [0, crateTextureAmbient],
+            [1, crateTextureDiffuse],
+            [2, crateTextureSpecular],
+        ],
+        cullFace: gl.BACK,
+        depthTest: gl.LESS,
+        instances: () => crateIDs.length,
+        enabled: () => crateIDs.length > 0,
+    });
+
+    // =====================================================================
+    // Destruction Logic
+    // =====================================================================
+
+    const phi = 2.399963229728653;
+
+    // This is called a "Fibonacci Sphere" distribution.
+    function initial_position(id)
+    {
+        const y = 1.0 - (id / Math.max(1.0, crateCount - 1.0)) * 2.0; // -1 to 1
+        const radius = Math.sqrt(1.0 - y * y); // radius at y
+        const angle = id * phi; // angle around the sphere
+        return new Vec3(radius * Math.cos(angle), y, radius * Math.sin(angle));
+    }
+
+    function random(seed)
+    {
+        const x = Math.sin(seed) * 1.5453;
+        return x - Math.floor(x);
+    }
+
+    function randomRange(seed, min, max)
+    {
+        return min + random(seed) * (max - min);
+    }
+
+    function randomAxis(seed)
+    {
+        return new Vec3(
+            randomRange(seed + 0.0, -1.0, 1.0),
+            randomRange(seed + 1.0, -1.0, 1.0),
+            randomRange(seed + 2.0, -1.0, 1.0),
+        ).normalize();
+    }
+
+    function getCratePos(seed, time)
+    {
+        const start = initial_position(seed);
+        const axis = randomAxis(seed).cross(start).normalize();
+        const angle = time * crateSpeed * randomRange(seed, 0.3, 1.0);
+        const rotation = Mat4.fromRotation(axis, angle);
+        return start.applyMat4(rotation);
+    }
+
+    function destroyCrates(time)
+    {
+        // The position of the "explosion" on the unit sphere.
+        const surfacePos = viewPos.clone().normalize();
+
+        // Only the crates outside the destruction radius will survive.
+        const newCrates = [];
+        for (const crateIdx of crateIDs) {
+            if (getCratePos(crateIdx, time).distanceToSq(surfacePos) > destructionRadiusSq) {
+                newCrates.push(crateIdx);
+            }
+        }
+
+        // Update the crate count and the instance attribute buffer.
+        const oldCreateCount = crateIDs.length;
+        crateIDs = newCrates;
+        gl.bindBuffer(gl.ARRAY_BUFFER, crateIABO.glObject);
+        gl.bufferSubData(gl.ARRAY_BUFFER, 0, new Float32Array(newCrates));
+
+        console.log(
+            `Your shot has destroyed: ${oldCreateCount - crateIDs.length} crates, ${crateIDs.length} remaining!`,
+        );
+    }
+
+    // =====================================================================
+    // Render Loop
+    // =====================================================================
+
+    setRenderLoop((time) =>
+    {
+        // Calculate and draw the fps
+        averageDelta = averageDelta + (time - lastTime - averageDelta) / 20;
+        lastTime = time;
+        const fps = Math.min(60, 1000 / averageDelta + 0.1); // add a small bias to reach a solid 60fps
+        hud.clearRect(0, 0, hud.canvas.width, hud.canvas.height);
+        hud.fillStyle = "white";
+        hud.font = "16px monospace";
+        hud.fillText(`fps: ${fps.toFixed(2)}`, 10, 20);
+
+        // Draw the reticle
+        hud.beginPath();
+        hud.arc(hud.canvas.width / 2, hud.canvas.height / 2, 200 / zoom, 0, Math.PI * 2);
+        hud.strokeStyle = "white";
+        hud.stroke();
+
+        // Update the view
+        viewPos.set(0, 0, zoom).rotateX(tilt).rotateY(pan);
+        viewMatrix.lookAt(viewPos, Vec3.zero(), Vec3.yAxis());
+
+        // Draw the scene
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+        glance.performDrawCall(gl, earthDrawCall, time);
+        glance.performDrawCall(gl, crateDrawCall, time);
+        glance.performDrawCall(gl, skyboxDrawCall, time);
+    });
+    // Game Code End ///////////////////////////////////////////////////////////
+</script>
+
+</html>

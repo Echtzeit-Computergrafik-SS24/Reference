@@ -1089,7 +1089,7 @@ export class Mat4
     }
 
     /// The rotation component of this Mat4.
-    public getRotation(): Mat3
+    public getMat3(): Mat3
     {
         return new Mat3(
             this.a, this.b, this.c,

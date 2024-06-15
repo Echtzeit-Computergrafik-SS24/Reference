@@ -603,6 +603,21 @@ export class Vec3 {
         this.z = bz * factor + az * cosine + (-by * ax + bx * ay) * sine;
         return this;
     }
+    /// Translate this Vec3 along the positive x-axis by the given distance.
+    translateX(distance) {
+        this.x += distance;
+        return this;
+    }
+    /// Translate this Vec3 along the positive y-axis by the given distance.
+    translateY(distance) {
+        this.y += distance;
+        return this;
+    }
+    /// Translate this Vec3 along the positive z-axis by the given distance.
+    translateZ(distance) {
+        this.z += distance;
+        return this;
+    }
     /// Rotate this Vec3 around the positive x-axis by the given angle in radians.
     rotateX(radians) {
         const y = this.y, z = this.z;

@@ -1,6 +1,7 @@
 export
 {
     createBox,
+    createCircularPlane,
     createPlane,
     createScreenQuat,
     createSphere,
@@ -121,6 +122,67 @@ function createPlane(name: string, options: {
             texCoord.y = v;
             texCoord.applyMat3(textureXform);
             texCoords.push(texCoord.x, texCoord.y);
+        }
+    }
+
+    return {
+        name,
+        positions,
+        indices,
+        texCoords,
+        normals,
+        tangents,
+    };
+}
+
+
+/// Create a 3D Circular Plane geometry, spanning the XY plane.
+/// @param name Name of the geometry.
+/// @param radius Radius of the circular plane, default: 1.
+/// @param segments Number of segments around the perimeter of the circle, default: 32.
+/// @param internalSegments Number of internal segments, default: 1.
+/// @returns
+function createCircularPlane(name: string, options: {
+    radius?: number,
+    segments?: number,
+    internalSegments?: number,
+} = {}): Geometry
+{
+    // Validate the arguments.
+    const radius = Math.abs(options.radius ?? 1);
+    const segments = Math.max(Math.round(options.segments ?? 32), 3);
+    const internalSegments = Math.max(Math.round(options.internalSegments ?? 1), 1);
+
+    // Initialize the arrays.
+    const positions: Array<number> = new Array<number>();
+    const indices: Array<number> = new Array<number>();
+    const texCoords: Array<number> = new Array<number>();
+    const normals: Array<number> = new Array<number>();
+    const tangents: Array<number> = new Array<number>();
+
+    for (let i = 0; i <= internalSegments; i++) {
+        const r = radius * (i / internalSegments);
+        for (let j = 0; j <= segments; j++) {
+            const theta = 2 * Math.PI * (j / segments);
+            const x = -r * Math.cos(theta);
+            const y = r * Math.sin(theta);
+            // positions
+            positions.push(x, y, 0);
+            // normals
+            normals.push(0, 0, 1);
+            // tangents
+            tangents.push(1, 0, 0);
+            // texture coordinates
+            texCoords.push((x / radius + 1) / 2, (y / radius + 1) / 2);
+            // indices
+            if (i < internalSegments && j < segments) {
+                const a = i * (segments + 1) + j;
+                const b = i * (segments + 1) + j + 1;
+                const c = (i + 1) * (segments + 1) + j + 1;
+                const d = (i + 1) * (segments + 1) + j;
+                indices.push(a, b, d);
+                indices.push(b, c, d);
+            }
         }
     }
 
@@ -756,38 +818,38 @@ function removeUnusedFaces(name: string, indices: Array<number>, positions: Arra
     // See the poles of a sphere with radius 0.5, widthSegments: 64, heightSegments: 32
     return;
 
-    // Validate the arguments.
-    if (positions.length % 3 !== 0) {
-        throwError(() => `The positions array of "${name}" must have a length that is a multiple of 3, but it is ${positions.length}.`);
-    }
-    if (indices.length % 3 !== 0) {
-        throwError(() => `The indices array of "${name}" must have a length that is a multiple of 3, but it is ${indices.length}.`);
-    }
+    // // Validate the arguments.
+    // if (positions.length % 3 !== 0) {
+    //     throwError(() => `The positions array of "${name}" must have a length that is a multiple of 3, but it is ${positions.length}.`);
+    // }
+    // if (indices.length % 3 !== 0) {
+    //     throwError(() => `The indices array of "${name}" must have a length that is a multiple of 3, but it is ${indices.length}.`);
+    // }
 
-    // Go through all faces and check if they are degenerate.
-    const v0: Vec3 = new Vec3();
-    const e1: Vec3 = new Vec3();
-    const e2: Vec3 = new Vec3();
-    const faceCountBefore = indices.length / 3;
-    for (let i = 0; i < indices.length;) {
-        // Edges of the face.
-        v0.fromArray(positions, indices[i] * 3);
-        e1.fromArray(positions, indices[i + 1] * 3).subtract(v0);
-        e2.fromArray(positions, indices[i + 2] * 3).subtract(v0);
+    // // Go through all faces and check if they are degenerate.
+    // const v0: Vec3 = new Vec3();
+    // const e1: Vec3 = new Vec3();
+    // const e2: Vec3 = new Vec3();
+    // const faceCountBefore = indices.length / 3;
+    // for (let i = 0; i < indices.length;) {
+    //     // Edges of the face.
+    //     v0.fromArray(positions, indices[i] * 3);
+    //     e1.fromArray(positions, indices[i + 1] * 3).subtract(v0);
+    //     e2.fromArray(positions, indices[i + 2] * 3).subtract(v0);
 
-        // If the area of the face is zero, remove it.
-        if (e1.cross(e2).lengthSq() < EPSILON) {
-            indices.splice(i, 3);
-        }
-        // The face is valid, so move on to the next one.
-        else {
-            i += 3;
-        }
-    }
-    const facesRemoved = faceCountBefore - indices.length / 3;
-    if (facesRemoved > 0) {
-        logInfo(() => `Removed ${facesRemoved} degenerate faces from "${name}".`);
-    }
+    //     // If the area of the face is zero, remove it.
+    //     if (e1.cross(e2).lengthSq() < EPSILON) {
+    //         indices.splice(i, 3);
+    //     }
+    //     // The face is valid, so move on to the next one.
+    //     else {
+    //         i += 3;
+    //     }
+    // }
+    // const facesRemoved = faceCountBefore - indices.length / 3;
+    // if (facesRemoved > 0) {
+    //     logInfo(() => `Removed ${facesRemoved} degenerate faces from "${name}".`);
+    // }
 }
 
 

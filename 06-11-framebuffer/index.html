@@ -1,0 +1,834 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+
+        canvas {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+        }
+    </style>
+</head>
+
+<body>
+    <canvas id="canvas" tabindex="0"></canvas>
+    <canvas id="hud" tabindex="0"></canvas>
+</body>
+
+<script type="module">
+    // Boilerplate code ////////////////////////////////////////////////////////
+
+    import * as glance from "../glance/js/index.js";
+    const { Vec2, Vec3, Mat4 } = glance;
+
+    // Get the WebGL context
+    const glCanvas = document.getElementById('canvas');
+    const hudCanvas = document.getElementById('hud');
+    const gl = glance.getContext(glCanvas);
+    const hud = hudCanvas.getContext('2d');
+
+    // Basic render loop wrapper.
+    function setRenderLoop(callback) {
+        function renderLoop(time) {
+            callback(time);
+            requestAnimationFrame(renderLoop);
+        }
+        requestAnimationFrame(renderLoop);
+    }
+
+    // Resize callback
+    let _resizeCallback = null;
+    function onResizeInternal() {
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+        glCanvas.width = width;
+        glCanvas.height = height;
+        hudCanvas.width = width;
+        hudCanvas.height = height;
+        gl.viewport(0, 0, width, height);
+        if (_resizeCallback)
+        {
+            _resizeCallback(width, height);
+        }
+    }
+    onResizeInternal();
+    window.addEventListener("resize", onResizeInternal);
+    function onResize(callback) {
+        _resizeCallback = callback;
+        _resizeCallback(window.innerWidth, window.innerHeight);
+    }
+
+    // Mouse event handling
+    function onMouseDrag(callback) {
+        let isDragging = null;
+        hudCanvas.addEventListener("mousedown", () => {
+            isDragging = true;
+        });
+        hudCanvas.addEventListener("mousemove", (e) => {
+            if (isDragging)
+            {
+                callback(e);
+            }
+        });
+        hudCanvas.addEventListener("mouseup", () => {
+            isDragging = false;
+        });
+    }
+
+    function onMouseWheel(callback) {
+        hudCanvas.addEventListener("wheel", (e) => {
+            e.preventDefault();
+            callback(e);
+        });
+    }
+
+    // Keyboard event handling
+    function onKeyDown(callback) {
+        window.addEventListener("keydown", (e) => {
+            callback(e);
+        });
+    }
+    function onKeyUp(callback) {
+        window.addEventListener("keyup", (e) => {
+            callback(e);
+        });
+    }
+
+    // Game Code Start /////////////////////////////////////////////////////////
+
+    // =====================================================================
+    // Constants
+    // =====================================================================
+
+    const fov = Math.PI / 4;
+    const nearPlane = 1.09;
+    const farPlane = 14.01;
+    const cameraSpeed = 0.003;
+    const zoomSpeed = 0.1;
+    const minZoom = 4.2;
+    const maxZoom = 8.0;
+    const minPan = -0.8;
+    const maxPan = 0.8;
+    const minTilt = -0.6;
+    const maxTilt = 0.0;
+    const lightDirection = new Vec3(-0.8, 0, -1).normalize();
+
+    const geoPos = new Vec3(0, 1.0, 0);
+
+    const tvPos = new Vec3(0, -0.5, 1.8);
+    const tvScale = 0.04;
+
+    const groundPos = new Vec3(0, -0.5, 0);
+    const groundSize = 8.0;
+
+    const screenSize = new Vec2(0.57, 0.54);
+    const screen1Pos = new Vec3(0, 0.2, 2.068);
+    const screen1Rotation = 0;
+
+    const screenTargetSize = new Vec2(512, 512);
+    const postTargetSize = new Vec2(1920, 1080);
+    const screenProjectionMatrix = Mat4.perspective(fov, screenTargetSize.aspectRatio, 0.2, 10.0);
+
+    // =====================================================================
+    // Game State
+    // =====================================================================
+
+    /// The user can orbit the camera around the world origin and zoom in and out.
+    let pan = 0;
+    let tilt = 0;
+    let zoom = 4.5;
+
+    onMouseDrag((e) => {
+        pan = glance.clamp(pan - e.movementX * cameraSpeed, minPan, maxPan);
+        tilt = glance.clamp(tilt - e.movementY * cameraSpeed, minTilt, maxTilt);
+    });
+
+    onMouseWheel((e) => {
+        const factor = 1 + Math.sign(e.deltaY) * zoomSpeed;
+        zoom = glance.clamp(zoom * factor, minZoom, maxZoom);
+    });
+
+    /// Resizing the viewport will update the projection matrix.
+    const projectionMatrix = Mat4.perspective(fov, gl.canvas.width / gl.canvas.height, nearPlane, farPlane);
+    onResize(() => {
+        projectionMatrix.perspective(fov, gl.canvas.width / gl.canvas.height, nearPlane, farPlane);
+    });
+
+    // These variables are used by the draw calls.
+    // They are updated in the render loop.
+    const viewPos = Vec3.zero();
+    const viewMatrix = Mat4.identity();
+
+    // =====================================================================
+    // Skybox
+    // =====================================================================
+
+    const skyboxVSSource = `#version 300 es
+    precision highp float;
+    uniform mat4 u_viewMatrix;
+    uniform mat4 u_projectionMatrix;
+    in vec3 a_pos;
+    out vec3 f_texCoord;
+    void main() {
+        f_texCoord = a_pos;
+        vec4 ndcPos = u_projectionMatrix * u_viewMatrix * vec4(a_pos, 0.0);
+        gl_Position = ndcPos.xyww;
+    }
+`;
+
+    const skyboxFSSource = `#version 300 es
+    precision mediump float;
+    uniform samplerCube u_skybox;
+    in vec3 f_texCoord;
+    out vec4 o_fragColor;
+    void main() {
+        o_fragColor = vec4(texture(u_skybox, f_texCoord).rgb, 1.0);
+    }
+`;
+
+    const skyboxShader = glance.createShader(gl, "shader-skybox", skyboxVSSource, skyboxFSSource, {
+        u_skybox: 0,
+    });
+
+    const skyboxGeo = glance.createBox("skybox-geo");
+    const skyboxIBO = glance.createIndexBuffer(gl, skyboxGeo.indices);
+    const skyboxABO = glance.createAttributeBuffer(gl, "skybox-abo", {
+        a_pos: { data: skyboxGeo.positions, height: 3 },
+    });
+    const skyboxVAO = glance.createVAO(
+        gl,
+        "skybox-vao",
+        skyboxIBO,
+        glance.buildAttributeMap(skyboxShader, [skyboxABO]),
+    );
+
+    const skyboxTexture = await glance.loadCubemapNow(gl, "skybox-texture", [
+        "https://echtzeit-computergrafik-ss24.github.io/img/skybox-lot-2k-px.webp",
+        "https://echtzeit-computergrafik-ss24.github.io/img/skybox-lot-2k-nx.webp",
+        "https://echtzeit-computergrafik-ss24.github.io/img/skybox-lot-2k-py.webp",
+        "https://echtzeit-computergrafik-ss24.github.io/img/skybox-lot-2k-ny.webp",
+        "https://echtzeit-computergrafik-ss24.github.io/img/skybox-lot-2k-pz.webp",
+        "https://echtzeit-computergrafik-ss24.github.io/img/skybox-lot-2k-nz.webp",
+    ]);
+
+    const skyboxDrawCall = glance.createDrawCall(gl, skyboxShader, skyboxVAO, {
+        uniforms: {
+            u_viewMatrix: () => viewMatrix,
+            u_projectionMatrix: () => projectionMatrix,
+        },
+        textures: [[0, skyboxTexture]],
+        cullFace: gl.NONE,
+        depthTest: gl.LEQUAL,
+    });
+
+    // =====================================================================
+    // Anomaly
+    // =====================================================================
+
+    const blinnPhongVSSource = `#version 300 es
+    precision highp float;
+
+    uniform mat4 u_modelMatrix;
+    uniform mat4 u_viewMatrix;
+    uniform mat4 u_projectionMatrix;
+
+    in vec3 a_pos;
+    in vec3 a_normal;
+    in vec2 a_texCoord;
+
+    out vec3 f_normal;
+    out vec3 f_worldPos;
+    out vec2 f_texCoord;
+
+    void main() {
+        vec4 worldPosition = u_modelMatrix * vec4(a_pos, 1.0);
+        f_worldPos = worldPosition.xyz;
+        f_normal = (u_modelMatrix * vec4(a_normal, 0.0)).xyz;
+        f_texCoord = a_texCoord;
+
+        gl_Position = u_projectionMatrix * u_viewMatrix * worldPosition;
+    }
+`;
+
+    const blinnPhongFSSource = `#version 300 es
+    precision mediump float;
+
+    uniform float u_ambient;
+    uniform float u_diffuse;
+    uniform float u_specular;
+    uniform float u_reflection;
+    uniform vec3 u_viewPosition;
+    uniform vec3 u_lightDirection;
+    uniform sampler2D u_texDiffuse;
+    uniform sampler2D u_texSpecular;
+    uniform samplerCube u_skybox;
+
+    in vec3 f_normal;
+    in vec3 f_worldPos;
+    in vec2 f_texCoord;
+
+    layout (location = 0) out vec4 o_fragColor;
+    layout (location = 1) out vec4 o_fragNormal;
+
+    float near = 0.2;
+    float far  = 10.0;
+
+    void main() {
+        // lighting
+        vec3 normal = normalize(f_normal);
+        vec3 viewDirection = normalize(u_viewPosition - f_worldPos);
+        vec3 halfWay = normalize(viewDirection + u_lightDirection);
+        vec3 reflectionDirection = reflect(-viewDirection, normal);
+
+        // texture
+        vec3 texDiffuse = texture(u_texDiffuse, f_texCoord).rgb;
+        vec3 texSpecular = texture(u_texSpecular, f_texCoord).rgb;
+
+        vec3 ambient = vec3(u_ambient) * texDiffuse;
+        vec3 diffuse = max(0.0, dot(normal, u_lightDirection)) * texDiffuse * u_diffuse;
+        vec3 specular = pow(max(0.0, dot(normal, halfWay)), 64.0) * texSpecular * u_specular;
+        vec3 reflection = texture(u_skybox, reflectionDirection).rgb * u_reflection;
+
+        o_fragColor = vec4(ambient + diffuse + specular + reflection, 1.0);
+
+        // visualize normal
+        o_fragNormal = vec4(normal, 1.0);
+
+        // visualize depth
+        // float depth = gl_FragCoord.z * 2.0 - 1.0; // back to NDC
+        // depth = (2.0 * near * far) / (far + near - depth * (far - near));
+        // depth = depth / far;
+        // o_fragNormal = vec4(vec3(depth), 1.0);
+    }
+`;
+
+    const anomalyShader = glance.createShader(gl, "anomaly-shader", blinnPhongVSSource, blinnPhongFSSource, {
+        u_lightDirection: lightDirection,
+        u_ambient: 0.25,
+        u_diffuse: 0.7,
+        u_specular: 0.2,
+        u_reflection: 0.05,
+        u_texDiffuse: 0,
+        u_texSpecular: 1,
+        u_skybox: 2,
+    });
+
+    const anomalyGeo = glance.createTorusKnot("geo-torus", {
+        knotRadius: 0.4,
+        tubeRadius: 0.15,
+        tubeSegments: 128,
+        radialSegments: 64,
+    });
+
+    anomalyGeo.texCoords = anomalyGeo.texCoords.map((c, i) => (i % 2 === 1 ? c : c * 10));
+    const anomalyIBO = glance.createIndexBuffer(gl, anomalyGeo.indices);
+    const anomalyABO = glance.createAttributeBuffer(gl, "anomaly-abo", {
+        a_pos: { data: anomalyGeo.positions, height: 3 },
+        a_normal: { data: anomalyGeo.normals, height: 3 },
+        a_texCoord: { data: anomalyGeo.texCoords, height: 2 },
+    });
+    const anomalyVAO = glance.createVAO(
+        gl,
+        "anomaly-vao",
+        anomalyIBO,
+        glance.buildAttributeMap(anomalyShader, [anomalyABO]),
+    );
+
+    const anomalyTextureDiffuse = await glance.loadTextureNow(gl, "https://echtzeit-computergrafik-ss24.github.io/img/rockwall-diffuse.avif", {
+        wrap: gl.REPEAT,
+    });
+    const anomalyTextureSpecular = await glance.loadTextureNow(gl, "https://echtzeit-computergrafik-ss24.github.io/img/rockwall-specular.avif", {
+        wrap: gl.REPEAT,
+    });
+
+    const anomalyDrawCall = glance.createDrawCall(gl, anomalyShader, anomalyVAO, {
+        uniforms: {
+            u_modelMatrix: ({ time }) =>
+                Mat4.fromTranslation(geoPos)
+                    .translateY(Math.sin(time * 0.001) * 0.05)
+                    .rotateY(Math.PI + time * 0.0001),
+            u_viewMatrix: () => viewMatrix,
+            u_projectionMatrix: () => projectionMatrix,
+            u_viewPosition: () => viewPos,
+        },
+        textures: [
+            [0, anomalyTextureDiffuse],
+            [1, anomalyTextureSpecular],
+            [2, skyboxTexture],
+        ],
+        cullFace: gl.BACK,
+        depthTest: gl.LESS,
+    });
+
+    // =====================================================================
+    // Ground
+    // =====================================================================
+
+    const groundVSSource = `#version 300 es
+    precision highp float;
+
+    uniform mat4 u_modelMatrix;
+    uniform mat4 u_viewMatrix;
+    uniform mat4 u_projectionMatrix;
+
+    in vec3 a_pos;
+    in vec2 a_texCoord;
+
+    out vec2 f_texCoord;
+
+    void main() {
+        f_texCoord = a_texCoord;
+        gl_Position = u_projectionMatrix * u_viewMatrix * u_modelMatrix * vec4(a_pos, 1.0);
+    }
+`;
+
+    const groundFSSource = `#version 300 es
+    precision mediump float;
+
+    uniform sampler2D u_texGround;
+
+    in vec2 f_texCoord;
+
+    out vec4 o_fragColor;
+
+    void main() {
+        o_fragColor = texture(u_texGround, f_texCoord);
+    }
+`;
+
+    const groundShader = glance.createShader(gl, "ground-shader", groundVSSource, groundFSSource, {
+        u_lightDirection: lightDirection,
+        u_modelMatrix: Mat4.fromTranslation(groundPos).rotateX(Math.PI / -2),
+        u_texGround: 0,
+    });
+
+    const groundGeo = glance.createCircularPlane("ground-geo", {
+        radius: groundSize,
+        segments: 64,
+    });
+    const groundIBO = glance.createIndexBuffer(gl, groundGeo.indices);
+    const groundABO = glance.createAttributeBuffer(gl, "ground-abo", {
+        a_pos: { data: groundGeo.positions, height: 3 },
+        a_normal: { data: groundGeo.normals, height: 3 },
+        a_texCoord: { data: groundGeo.texCoords, height: 2 },
+    });
+    const groundVAO = glance.createVAO(
+        gl,
+        "ground-vao",
+        groundIBO,
+        glance.buildAttributeMap(groundShader, [groundABO]),
+    );
+
+    const groundTextureDiffuse = await glance.loadTextureNow(gl, "https://echtzeit-computergrafik-ss24.github.io/img/skybox-lot-2k-ny.webp");
+
+    const groundDrawCall = glance.createDrawCall(gl, groundShader, groundVAO, {
+        uniforms: {
+            u_viewMatrix: () => viewMatrix,
+            u_projectionMatrix: () => projectionMatrix,
+            u_viewPosition: () => viewPos,
+        },
+        textures: [[0, groundTextureDiffuse]],
+        cullFace: gl.BACK,
+        depthTest: gl.LESS,
+    });
+
+    // =============================================================================
+    // TV
+    // =============================================================================
+
+    const tvShader = glance.createShader(gl, "tv-shader", blinnPhongVSSource, blinnPhongFSSource, {
+        u_lightDirection: lightDirection,
+        u_ambient: 0.45,
+        u_diffuse: 0.9,
+        u_specular: 0.2,
+        u_reflection: 0.08,
+        u_texDiffuse: 0,
+        u_texSpecular: 1,
+        u_skybox: 2,
+    });
+
+    // const tvGeo = await glance.loadObj("https://rt3d.dev/geo/tv.obj");
+    const tvGeo = await glance.loadObj("https://echtzeit-computergrafik-ss24.github.io/geo/tv.obj");
+
+    const tvIBO = glance.createIndexBuffer(gl, tvGeo.indices);
+    const tvABO = glance.createAttributeBuffer(gl, "tv-abo", {
+        a_pos: { data: tvGeo.positions, height: 3 },
+        a_normal: { data: tvGeo.normals, height: 3 },
+        a_texCoord: { data: tvGeo.texCoords, height: 2 },
+    });
+    const tvVAO = glance.createVAO(gl, "tv-vao", tvIBO, glance.buildAttributeMap(tvShader, [tvABO]));
+
+    const tvTextureDiffuse = await glance.loadTextureNow(gl, "https://echtzeit-computergrafik-ss24.github.io/img/tv-albedo.webp");
+
+    const tvDrawCall = glance.createDrawCall(gl, tvShader, tvVAO, {
+        uniforms: {
+            u_modelMatrix: () => Mat4.fromTranslation(tvPos).scale(tvScale),
+            u_viewMatrix: () => viewMatrix,
+            u_projectionMatrix: () => projectionMatrix,
+            u_viewPosition: () => viewPos,
+        },
+        textures: [
+            [0, tvTextureDiffuse],
+            [1, tvTextureDiffuse],
+            [2, skyboxTexture],
+        ],
+        cullFace: gl.BACK,
+        depthTest: gl.LESS,
+    });
+
+    // =============================================================================
+    // Screen
+    // =============================================================================
+
+    const screenVSSource = `#version 300 es
+    precision highp float;
+
+    uniform mat4 u_modelMatrix;
+    uniform mat4 u_viewMatrix;
+    uniform mat4 u_projectionMatrix;
+
+    in vec3 a_pos;
+    in vec2 a_texCoord;
+
+    out vec2 f_texCoord;
+
+    void main()
+    {
+        f_texCoord = a_texCoord;
+        gl_Position = u_projectionMatrix * u_viewMatrix * u_modelMatrix * vec4(a_pos, 1.0);
+    }
+`;
+
+    const screenFSSource = `#version 300 es
+    precision mediump float;
+
+    uniform sampler2D u_texture;
+    uniform float u_time;
+
+    in vec2 f_texCoord;
+
+    out vec4 o_fragColor;
+
+    vec3 greyscale(vec3 color)
+    {
+        return vec3(0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b);
+    }
+
+    vec3 applyKernel(sampler2D image, vec2 uv, float kernel[9], float offset)
+    {
+        const vec2 offsets[9] = vec2[](
+            vec2(-1,  1), // top-left
+            vec2( 0,  1), // top-center
+            vec2( 1,  1), // top-right
+            vec2(-1,  0), // center-left
+            vec2( 0,  0), // center-center
+            vec2( 1,  0), // center-right
+            vec2(-1, -1), // bottom-left
+            vec2( 0, -1), // bottom-center
+            vec2( 1, -1)  // bottom-right
+        );
+
+        vec3 color = vec3(0.0);
+        for(int i = 0; i < 9; i++) {
+            color += texture(image, uv + offsets[i] * offset).rgb * kernel[i];
+        }
+        return color;
+    }
+
+    const float sharpenKernel[9] = float[](
+        -1., -1., -1.,
+        -1.,  9., -1.,
+        -1., -1., -1.
+    );
+
+    const float blurKernel[9] = float[](
+        1./ 16., 2./16., 1./16.,
+        2./ 16., 4./16., 2./16.,
+        1./ 16., 2./16., 1./16.
+    );
+
+    const float grainStrength = 205.0;
+
+    void main() {
+        vec2 uv = gl_FragCoord.xy / vec2(${screenSize.width}, ${screenSize.height});
+        float x = (uv.x + 4.0 ) * (uv.y + 4.0 ) * (mod(u_time, 10000.));
+        float grain = 1.0 - ((mod((mod(x, 13.0) + 1.0) * (mod(x, 123.0) + 1.0), 0.01)-0.005) * grainStrength);
+
+        vec3 color = texture(u_texture, f_texCoord).rgb;
+        vec3 blurred = applyKernel(u_texture, f_texCoord, blurKernel, 1.0 / 400.0);
+        vec3 sharpened = applyKernel(u_texture, f_texCoord, sharpenKernel, 1.0 / 400.0);
+
+        color = mix(color, sharpened, 1.0);
+        color = mix(color, blurred, .7);
+        // color = greyscale(color);
+        color = color * grain;
+
+        o_fragColor = vec4(color, 1.0);
+    }
+`;
+
+    const screenShader = glance.createShader(gl, "screen-shader", screenVSSource, screenFSSource, {
+        u_lightDirection: lightDirection,
+        u_texture: 0,
+    });
+
+    const screenGeo = glance.createPlane("screen1-geo", {
+        width: screenSize.width,
+        height: screenSize.height,
+    });
+
+    const screenIBO = glance.createIndexBuffer(gl, screenGeo.indices);
+    const screenABO = glance.createAttributeBuffer(gl, "screen-abo", {
+        a_pos: { data: screenGeo.positions, height: 3 },
+        a_texCoord: { data: screenGeo.texCoords, height: 2 },
+    });
+    const screenVAO = glance.createVAO(
+        gl,
+        "screen-vao",
+        screenIBO,
+        glance.buildAttributeMap(screenShader, [screenABO]),
+    );
+
+    const screenColorTexture = glance.createTexture(
+        gl,
+        "color-target",
+        screenTargetSize.width,
+        screenTargetSize.height,
+        gl.TEXTURE_2D,
+        null,
+        {
+            useAnisotropy: false,
+            internalFormat: gl.RGBA8,
+            levels: 1,
+        },
+    );
+
+    const screenNormalTexture = glance.createTexture(
+        gl,
+        "normalcolor-target",
+        screenTargetSize.width,
+        screenTargetSize.height,
+        gl.TEXTURE_2D,
+        null,
+        {
+            useAnisotropy: false,
+            internalFormat: gl.RGBA8,
+            levels: 1,
+        },
+    );
+
+    const screenDrawCall = glance.createDrawCall(gl, screenShader, screenVAO, {
+        uniforms: {
+            u_modelMatrix: () => Mat4.fromTranslation(screen1Pos).rotateY(screen1Rotation),
+            u_viewMatrix: () => viewMatrix,
+            u_projectionMatrix: () => projectionMatrix,
+            u_viewPosition: () => viewPos,
+        },
+        textures: [
+            [0, screenColorTexture],
+            // [0, screenNormalTexture],
+        ],
+        cullFace: gl.BACK,
+        depthTest: gl.LESS,
+    });
+
+    // =============================================================================
+    // Screen Framebuffer
+    // =============================================================================
+
+    const screenDepth = gl.createRenderbuffer();
+    gl.bindRenderbuffer(gl.RENDERBUFFER, screenDepth);
+    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, screenTargetSize.width, screenTargetSize.height);
+    gl.bindRenderbuffer(gl.RENDERBUFFER, null);
+
+    const screenFramebuffer = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, screenFramebuffer);
+    gl.framebufferTexture2D(
+        gl.FRAMEBUFFER,
+        gl.COLOR_ATTACHMENT0,
+        gl.TEXTURE_2D,
+        screenColorTexture.glObject,
+    /* level= */ 0,
+    );
+    gl.framebufferTexture2D(
+        gl.FRAMEBUFFER,
+        gl.COLOR_ATTACHMENT1,
+        gl.TEXTURE_2D,
+        screenNormalTexture.glObject,
+    /* level= */ 0,
+    );
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, screenDepth);
+    let fbStatus = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+    if (fbStatus !== gl.FRAMEBUFFER_COMPLETE)
+    {
+        throw new Error("Framebuffer incomplete");
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+    // =====================================================================
+    // Post Plane
+    // =====================================================================
+
+    const postVSSource = `#version 300 es
+    precision highp float;
+
+    in vec2 a_pos;
+    in vec2 a_texCoord;
+
+    out vec2 f_texCoord;
+
+    void main()
+    {
+        f_texCoord = a_texCoord;
+        gl_Position = vec4(a_pos, 0.0, 1.0);
+    }
+`;
+
+    const postFSSource = `#version 300 es
+    precision mediump float;
+
+    uniform sampler2D u_texture;
+    uniform sampler2D u_textLayer;
+
+    in vec2 f_texCoord;
+
+    out vec4 o_fragColor;
+
+    void main() {
+        vec3 color = texture(u_texture, f_texCoord).rgb;
+        float factor = texture(u_textLayer, f_texCoord).r;
+        color = mix(vec3(1.0) - color, color, factor);
+        o_fragColor = vec4(color, 1.0);
+    }
+`;
+
+    const postShader = glance.createShader(gl, "post-shader", postVSSource, postFSSource, {
+        u_texture: 0,
+        u_textLayer: 1,
+    });
+
+    const postGeo = glance.createScreenQuat("post1-geo", {
+        in2D: true,
+    });
+
+    const postIBO = glance.createIndexBuffer(gl, postGeo.indices);
+    const postABO = glance.createAttributeBuffer(gl, "post-abo", {
+        a_pos: { data: postGeo.positions, height: 2 },
+        a_texCoord: { data: postGeo.texCoords, height: 2 },
+    });
+    const postVAO = glance.createVAO(gl, "post-vao", postIBO, glance.buildAttributeMap(postShader, [postABO]));
+
+    const textTexture = await glance.loadTextureNow(gl, "https://echtzeit-computergrafik-ss24.github.io/img/anomaly-stencil.png");
+
+    const postTexture = glance.createTexture(
+        gl,
+        "color-target",
+        postTargetSize.width,
+        postTargetSize.height,
+        gl.TEXTURE_2D,
+        null,
+        {
+            useAnisotropy: false,
+            internalFormat: gl.RGBA8,
+            levels: 1,
+        },
+    );
+
+    const postDrawCall = glance.createDrawCall(gl, postShader, postVAO, {
+        uniforms: {},
+        textures: [
+            [0, postTexture],
+            [1, textTexture],
+        ],
+        cullFace: gl.NONE,
+        depthTest: gl.NONE,
+    });
+
+    // =============================================================================
+    // Post Framebuffer
+    // =============================================================================
+
+    const postDepth = gl.createRenderbuffer();
+    gl.bindRenderbuffer(gl.RENDERBUFFER, postDepth);
+    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, postTargetSize.width, postTargetSize.height);
+    gl.bindRenderbuffer(gl.RENDERBUFFER, null);
+
+    const postFramebuffer = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, postFramebuffer);
+    gl.framebufferTexture2D(
+        gl.FRAMEBUFFER,
+        gl.COLOR_ATTACHMENT0,
+        gl.TEXTURE_2D,
+        postTexture.glObject,
+    /* level= */ 0,
+    );
+    gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, postDepth);
+    fbStatus = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+    if (fbStatus !== gl.FRAMEBUFFER_COMPLETE)
+    {
+        throw new Error("Framebuffer incomplete");
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+    // =====================================================================
+    // Render Loop
+    // =====================================================================
+
+    const userProjectionMatrix = Mat4.identity();
+    setRenderLoop((time) => {
+        userProjectionMatrix.copy(projectionMatrix);
+
+        // The TV camera follows the view rotation but not position
+        viewPos.set(0, geoPos.y, 2).rotateX(tilt).rotateY(pan);
+        viewMatrix.lookAt(viewPos, geoPos, Vec3.yAxis());
+        projectionMatrix.copy(screenProjectionMatrix);
+
+        // Render the framebuffer
+        gl.bindFramebuffer(gl.FRAMEBUFFER, screenFramebuffer);
+        gl.viewport(0, 0, screenTargetSize.width, screenTargetSize.height);
+        gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+        glance.performDrawCall(gl, anomalyDrawCall, time);
+        gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
+        glance.performDrawCall(gl, skyboxDrawCall, time);
+
+        // Set the user camera
+        viewPos.set(0, 0, zoom).rotateX(tilt).rotateY(pan);
+        viewMatrix.lookAt(viewPos, Vec3.zero(), Vec3.yAxis());
+        projectionMatrix.copy(userProjectionMatrix);
+
+        // Render the user view
+        gl.bindFramebuffer(gl.FRAMEBUFFER, postFramebuffer);
+        gl.viewport(0, 0, postTargetSize.width, postTargetSize.height);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+        glance.performDrawCall(gl, anomalyDrawCall, time);
+        glance.performDrawCall(gl, groundDrawCall, time);
+        glance.performDrawCall(gl, screenDrawCall, time);
+        glance.performDrawCall(gl, tvDrawCall, time);
+        glance.performDrawCall(gl, skyboxDrawCall, time);
+
+        // Render the post view
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        glance.performDrawCall(gl, postDrawCall, time);
+    });
+
+    // Game Code End ///////////////////////////////////////////////////////////
+</script>
+
+</html>

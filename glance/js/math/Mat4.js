@@ -932,7 +932,7 @@ export class Mat4 {
         return new Vec3(this.m, this.n, this.o);
     }
     /// The rotation component of this Mat4.
-    getRotation() {
+    getMat3() {
         return new Mat3(this.a, this.b, this.c, this.e, this.f, this.g, this.i, this.j, this.k);
     }
     /// The scaling factors of this Mat4.

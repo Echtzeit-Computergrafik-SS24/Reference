@@ -14,6 +14,16 @@ export var AttributeDataType;
     AttributeDataType[AttributeDataType["INT_2_10_10_10_REV"] = 36255] = "INT_2_10_10_10_REV";
     AttributeDataType[AttributeDataType["UNSIGNED_INT_2_10_10_10_REV"] = 33640] = "UNSIGNED_INT_2_10_10_10_REV";
 })(AttributeDataType || (AttributeDataType = {}));
+/// All WebGL integer Attribute data types.
+/// https://developer.mozilla.org/en-US/docs/Web/API/WebGL2RenderingContext/vertexAttribIPointer#type
+export const INTEGER_TYPES = [
+    AttributeDataType.BYTE,
+    AttributeDataType.UNSIGNED_BYTE,
+    AttributeDataType.SHORT,
+    AttributeDataType.UNSIGNED_SHORT,
+    AttributeDataType.INT,
+    AttributeDataType.UNSIGNED_INT,
+];
 // Index Buffer ============================================================= //
 /// Data types for WebGL2 indices.
 /// https://developer.mozilla.org/en-US/docs/Web/API/WebGLRenderingContext/drawElements#type

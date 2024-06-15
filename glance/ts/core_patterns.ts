@@ -413,8 +413,7 @@ function createShader(
         }
     }
 }
-// TODO: return class instance that can be used to set uniforms and attributes
-// like with `myShader.uniforms.u_projectionMatrix = ...`
+// TODO: createShader is a bad name, also there exist createShaderProgram and createShaderProgram already ...
 
 // Framebuffer =============================================================== //
 

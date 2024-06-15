@@ -85,6 +85,7 @@ export class Vec2 {
     set width(value) { this.x = value; }
     get height() { return this.y; }
     set height(value) { this.y = value; }
+    get aspectRatio() { return this.y === 0 ? 0 : this.x / this.y; }
     get u() { return this.x; }
     set u(value) { this.x = value; }
     get v() { return this.y; }
@@ -435,6 +436,16 @@ export class Vec2 {
         const y = this.y - pivot.y;
         this.x = x * cos - y * sin + pivot.x;
         this.y = x * sin + y * cos + pivot.y;
+        return this;
+    }
+    /// Translate this Vec2 along the positive x-axis by the given distance.
+    translateX(distance) {
+        this.x += distance;
+        return this;
+    }
+    /// Translate this Vec2 along the positive y-axis by the given distance.
+    translateY(distance) {
+        this.y += distance;
         return this;
     }
     /// Transform this Vec2 by the given Mat3.

@@ -282,8 +282,7 @@ function createShader(gl, name, vertexSource, fragmentSource, uniforms = {}, att
         }
     }
 }
-// TODO: return class instance that can be used to set uniforms and attributes
-// like with `myShader.uniforms.u_projectionMatrix = ...`
+// TODO: createShader is a bad name, also there exist createShaderProgram and createShaderProgram already ...
 // Framebuffer =============================================================== //
 function getFramebufferSize(framebuffer) {
     if (framebuffer.color.length > 0) {

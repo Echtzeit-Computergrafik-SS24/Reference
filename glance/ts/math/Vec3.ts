@@ -783,6 +783,27 @@ export class Vec3
         return this;
     }
 
+    /// Translate this Vec3 along the positive x-axis by the given distance.
+    public translateX(distance: number): Vec3
+    {
+        this.x += distance;
+        return this;
+    }
+
+    /// Translate this Vec3 along the positive y-axis by the given distance.
+    public translateY(distance: number): Vec3
+    {
+        this.y += distance;
+        return this;
+    }
+
+    /// Translate this Vec3 along the positive z-axis by the given distance.
+    public translateZ(distance: number): Vec3
+    {
+        this.z += distance;
+        return this;
+    }
+
     /// Rotate this Vec3 around the positive x-axis by the given angle in radians.
     public rotateX(radians: number): Vec3
     {
