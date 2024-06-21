@@ -10,6 +10,7 @@
             margin: 0;
             padding: 0;
             overflow: hidden;
+            background-color: #191919;
         }
 
         canvas {
@@ -560,7 +561,7 @@
     const float grainStrength = 205.0;
 
     void main() {
-        vec2 uv = gl_FragCoord.xy / vec2(${screenSize.width}, ${screenSize.height});
+        vec2 uv = gl_FragCoord.xy / vec2(${screenTargetSize.width}, ${screenTargetSize.height});
         float x = (uv.x + 4.0 ) * (uv.y + 4.0 ) * (mod(u_time, 10000.));
         float grain = 1.0 - ((mod((mod(x, 13.0) + 1.0) * (mod(x, 123.0) + 1.0), 0.01)-0.005) * grainStrength);
 

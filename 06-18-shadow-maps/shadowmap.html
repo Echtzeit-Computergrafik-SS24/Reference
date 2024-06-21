@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #191919;
+        }
+
+        canvas {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+        }
+    </style>
+</head>
+
+<body>
+    <canvas id="canvas" tabindex="0"></canvas>
+    <canvas id="hud" tabindex="0"></canvas>
+</body>
+
+<script type="module">
+    // Boilerplate code ////////////////////////////////////////////////////////
+
+    import * as glance from "../glance/js/index.js";
+    const { Vec2, Vec3, Mat4 } = glance;
+
+    // Get the WebGL context
+    const glCanvas = document.getElementById('canvas');
+    const hudCanvas = document.getElementById('hud');
+    const gl = glance.getContext(glCanvas);
+    const hud = hudCanvas.getContext('2d');
+
+    // Basic render loop wrapper.
+    function setRenderLoop(callback) {
+        function renderLoop(time) {
+            callback(time);
+            requestAnimationFrame(renderLoop);
+        }
+        requestAnimationFrame(renderLoop);
+    }
+
+    // Resize callback
+    let _resizeCallback = null;
+    function onResizeInternal() {
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+        glCanvas.width = width;
+        glCanvas.height = height;
+        hudCanvas.width = width;
+        hudCanvas.height = height;
+        gl.viewport(0, 0, width, height);
+        if (_resizeCallback)
+        {
+            _resizeCallback(width, height);
+        }
+    }
+    onResizeInternal();
+    window.addEventListener("resize", onResizeInternal);
+    function onResize(callback) {
+        _resizeCallback = callback;
+        _resizeCallback(window.innerWidth, window.innerHeight);
+    }
+
+    // Mouse event handling
+    function onMouseDrag(callback) {
+        let isDragging = null;
+        hudCanvas.addEventListener("mousedown", () => {
+            isDragging = true;
+        });
+        hudCanvas.addEventListener("mousemove", (e) => {
+            if (isDragging)
+            {
+                callback(e);
+            }
+        });
+        hudCanvas.addEventListener("mouseup", () => {
+            isDragging = false;
+        });
+    }
+
+    function onMouseWheel(callback) {
+        hudCanvas.addEventListener("wheel", (e) => {
+            e.preventDefault();
+            callback(e);
+        });
+    }
+
+    // Keyboard event handling
+    function onKeyDown(callback) {
+        window.addEventListener("keydown", (e) => {
+            callback(e);
+        });
+    }
+    function onKeyUp(callback) {
+        window.addEventListener("keyup", (e) => {
+            callback(e);
+        });
+    }
+
+    // Game Code Start /////////////////////////////////////////////////////////
+
+    // =====================================================================
+    // Constants
+    // =====================================================================
+
+    // Globals
+    const origin = Vec3.zero();
+    const up = Vec3.yAxis();
+
+    // Camera settings
+    const fov = Math.PI / 4;
+    const nearPlane = 1.0;
+    const farPlane = 12;
+    const minZoom = 2.2;
+    const maxZoom = 4.0;
+    const minTilt = Math.PI / -2;
+    const maxTilt = 0.1;
+    const cameraSpeed = 0.007;
+    const zoomSpeed = 0.25;
+
+    // Scene settings
+    const groundOffset = -0.75;
+    const statueOffset = -0.75;
+    const statueRotation = Math.PI;
+
+    // Light settings
+    const lightProjection = Mat4.ortho(-0.5, 0.5, -0.8, 0.95, 0.3, 4.1);
+    const lightRotationSpeed = 0.0003;
+    const lightTilt = 0.4;
+
+    // =====================================================================
+    // Game State
+    // =====================================================================
+
+    /// The user can orbit the camera around the world origin and zoom in and out.
+    let pan = 0;
+    let tilt = 0;
+    let zoom = 5;
+
+    onMouseDrag((e) => {
+        pan -= e.movementX * cameraSpeed;
+        tilt = glance.clamp(tilt - e.movementY * cameraSpeed, minTilt, maxTilt);
+    });
+
+    onMouseWheel((e) => {
+        const factor = 1 + Math.sign(e.deltaY) * zoomSpeed;
+        zoom = glance.clamp(tilt * factor, minZoom, maxZoom);
+    });
+
+    /// Resizing the viewport will update the projection matrix.
+    const projectionMatrix = Mat4.perspective(fov, gl.canvas.width / gl.canvas.height, nearPlane, farPlane);
+    onResize(() => {
+        projectionMatrix.perspective(fov, gl.canvas.width / gl.canvas.height, nearPlane, farPlane);
+    });
+
+    // These variables are used by the draw calls.
+    // They are updated in the render loop.
+    const viewPos = Vec3.zero();
+    const viewMatrix = Mat4.identity();
+
+    // Variables for the light
+    const lightPos = Vec3.zero();
+    const lightXform = Mat4.identity();
+
+    // =====================================================================
+    // Shadow Depth Texture
+    // =====================================================================
+
+    const shadowDepthTexture = glance.createTexture(gl, "shadow-depth", 512, 512, gl.TEXTURE_2D, null, {
+        useAnisotropy: false,
+        internalFormat: gl.DEPTH_COMPONENT16,
+        levels: 1,
+        filter: gl.NEAREST,
+    });
+
+    // =====================================================================
+    // Statue
+    // =====================================================================
+
+    const basicVSSource = `#version 300 es
+    precision highp float;
+
+    uniform mat4 u_modelMatrix;
+    uniform mat4 u_viewMatrix;
+    uniform mat4 u_projectionMatrix;
+    uniform vec3 u_viewPosition;
+    uniform mat4 u_lightProjection;
+    uniform vec3 u_lightPosition;
+    uniform mat4 u_lightXform;
+
+    in vec3 a_pos;
+    in vec3 a_normal;
+
+    out vec3 f_fragPosWS;
+    out vec3 f_viewPosWS;
+    out vec3 f_lightDirWS;
+    out vec3 f_normalWS;
+    out vec4 f_fragPosLS;
+
+    void main() {
+        vec4 worldPosition = u_modelMatrix * vec4(a_pos, 1.0);
+        gl_Position = u_projectionMatrix * u_viewMatrix * worldPosition;
+
+        f_fragPosWS = worldPosition.xyz;
+        f_viewPosWS = u_viewPosition;
+        f_normalWS = normalize(mat3(u_modelMatrix) * a_normal);
+        f_lightDirWS = normalize(u_lightPosition);
+
+        f_fragPosLS = u_lightProjection * u_lightXform * worldPosition;
+    }
+`;
+
+    const basicFSSource = `#version 300 es
+    precision mediump float;
+
+    uniform float u_ambient;
+    uniform float u_diffuse;
+    uniform float u_specular;
+    uniform sampler2D u_texShadow;
+
+    in vec3 f_fragPosWS;
+    in vec3 f_viewPosWS;
+    in vec3 f_lightDirWS;
+    in vec3 f_normalWS;
+    in vec4 f_fragPosLS;
+
+    out vec4 o_fragColor;
+
+    float calculateShadow();
+
+    void main() {
+        // lighting
+        vec3 viewDirection = normalize(f_viewPosWS - f_fragPosWS);
+        vec3 halfWay = normalize(viewDirection + f_lightDirWS);
+
+        // lighting
+        vec3 ambient = vec3(u_ambient);
+        vec3 diffuse = max(0.0, dot(f_normalWS, f_lightDirWS)) * vec3(u_diffuse);
+        vec3 specular = pow(max(0.0, dot(f_normalWS, halfWay)), 64.0) * vec3(u_specular);
+
+        // shadow
+        float shadow = calculateShadow();
+
+        o_fragColor = vec4(ambient + shadow * (diffuse + specular), 1.0);
+    }
+
+    float calculateShadow() {
+        // Perspective divide.
+        vec3 projCoords = f_fragPosLS.xyz / f_fragPosLS.w;
+
+        // Transform to [0,1] range.
+        projCoords = projCoords * 0.5 + 0.5;
+
+        // No shadow for fragments outside of the light's frustum.
+        if(any(lessThan(projCoords, vec3(0))) || any(greaterThan(projCoords, vec3(1)))){
+            return 1.0;
+        }
+
+        float bias = 0.002;
+        float closestDepth = texture(u_texShadow, projCoords.xy).r;
+        return projCoords.z - bias > closestDepth  ? 0.0 : 1.0;
+    }
+`;
+
+    const statueShader = glance.createShader(gl, "statue-shader", basicVSSource, basicFSSource, {
+        u_lightProjection: lightProjection,
+        u_ambient: 0.12,
+        u_diffuse: 0.8,
+        u_specular: 0.5,
+        u_texShadow: 0,
+    });
+
+    const statueGeo = await glance.loadObj("https://echtzeit-computergrafik-ss24.github.io/geo/lucy100k.obj");
+    const statueIBO = glance.createIndexBuffer(gl, statueGeo.indices);
+    const statueABO = glance.createAttributeBuffer(gl, "statue-abo", {
+        a_pos: { data: statueGeo.positions, height: 3 },
+        a_normal: { data: statueGeo.normals, height: 3 },
+    });
+    const statueVAO = glance.createVAO(
+        gl,
+        "statue-vao",
+        statueIBO,
+        glance.buildAttributeMap(statueShader, [statueABO]),
+    );
+
+    const statueDrawCall = glance.createDrawCall(gl, statueShader, statueVAO, {
+        uniforms: {
+            u_modelMatrix: () => Mat4.fromTranslationY(statueOffset).rotateY(statueRotation),
+            u_viewMatrix: () => viewMatrix,
+            u_projectionMatrix: () => projectionMatrix,
+            u_viewPosition: () => viewPos,
+            u_lightPosition: () => lightPos,
+            u_lightXform: () => lightXform,
+        },
+        textures: [[0, shadowDepthTexture]],
+        cullFace: gl.BACK,
+        depthTest: gl.LESS,
+    });
+
+    // =====================================================================
+    // Ground
+    // =====================================================================
+
+    const groundShader = glance.createShader(gl, "ground-shader", basicVSSource, basicFSSource, {
+        u_modelMatrix: Mat4.fromTranslationY(groundOffset).rotateX(Math.PI / -2),
+        u_lightProjection: lightProjection,
+        u_ambient: 0.2,
+        u_diffuse: 0.7,
+        u_specular: 0.5,
+        u_texShadow: 0,
+    });
+
+    const groundGeo = glance.createCircularPlane("ground-geo", {
+        radius: 3,
+        segments: 64,
+    });
+    const groundIBO = glance.createIndexBuffer(gl, groundGeo.indices);
+    const groundABO = glance.createAttributeBuffer(gl, "ground-abo", {
+        a_pos: { data: groundGeo.positions, height: 3 },
+        a_normal: { data: groundGeo.normals, height: 3 },
+    });
+    const groundVAO = glance.createVAO(
+        gl,
+        "ground-vao",
+        groundIBO,
+        glance.buildAttributeMap(groundShader, [groundABO]),
+    );
+
+    const groundDrawCall = glance.createDrawCall(gl, groundShader, groundVAO, {
+        uniforms: {
+            u_viewMatrix: () => viewMatrix,
+            u_projectionMatrix: () => projectionMatrix,
+            u_viewPosition: () => viewPos,
+            u_lightPosition: () => lightPos,
+            u_lightXform: () => lightXform,
+        },
+        textures: [[0, shadowDepthTexture]],
+        cullFace: gl.BACK,
+        depthTest: gl.LESS,
+    });
+
+    // =====================================================================
+    // Shadow Mapping
+    // =====================================================================
+
+    const shadowVSSource = `#version 300 es
+    precision highp float;
+
+    uniform mat4 u_modelMatrix;
+    uniform mat4 u_lightXform;
+    uniform mat4 u_lightProjection;
+
+    in vec3 a_pos;
+
+    void main()
+    {
+        gl_Position = u_lightProjection * u_lightXform * u_modelMatrix * vec4(a_pos, 1.0);
+    }
+`;
+
+    const shadowFSSource = `#version 300 es
+    precision mediump float;
+
+    void main() {}
+`;
+
+    const shadowShader = glance.createShader(gl, "shadow-shader", shadowVSSource, shadowFSSource, {
+        u_lightProjection: lightProjection,
+    });
+
+    const shadowFramebuffer = glance.createFramebuffer(gl, "shadow-framebuffer", null, shadowDepthTexture);
+
+    const shadowDrawCalls = [
+        glance.createDrawCall(gl, shadowShader, statueVAO, {
+            uniforms: {
+                u_modelMatrix: () => Mat4.fromTranslationY(statueOffset).rotateY(statueRotation),
+                u_lightXform: () => lightXform,
+            },
+            cullFace: gl.BACK,
+            depthTest: gl.LESS,
+        }),
+        glance.createDrawCall(gl, shadowShader, groundVAO, {
+            uniforms: {
+                u_modelMatrix: () => Mat4.fromTranslationY(groundOffset).rotateX(Math.PI / -2),
+                u_lightXform: () => lightXform,
+            },
+            cullFace: gl.BACK,
+            depthTest: gl.LESS,
+        }),
+    ];
+
+    // =====================================================================
+    // Debug Screen
+    // =====================================================================
+
+    const debugShader = glance.createShader(gl, "debug-shader",
+        `#version 300 es
+    precision highp float;
+    in vec2 a_pos;
+    in vec2 a_texCoord;
+    out vec2 f_texCoord;
+    void main() {
+        f_texCoord = a_texCoord;
+        gl_Position = vec4(a_pos, 0.0, 1.0);
+    }
+`, `#version 300 es
+    precision mediump float;
+    uniform sampler2D u_texture;
+    in vec2 f_texCoord;
+    out vec4 o_fragColor;
+    void main() {
+        o_fragColor = vec4(vec3(texture(u_texture, f_texCoord).r), 1.0);
+    }
+`, {
+        u_texture: 0,
+    });
+
+    const debugGeo = glance.createScreenQuat("debug-geo", {
+        in2D: true,
+    });
+    const debugIBO = glance.createIndexBuffer(gl, debugGeo.indices);
+    const debugABO = glance.createAttributeBuffer(gl, "debug-abo", {
+        a_pos: { data: debugGeo.positions, height: 2 },
+        a_texCoord: { data: debugGeo.texCoords, height: 2 },
+    });
+    const debugVAO = glance.createVAO(gl, "debug-vao", debugIBO, glance.buildAttributeMap(debugShader, debugABO));
+
+    const debugDrawCall = glance.createDrawCall(gl, debugShader, debugVAO, {
+        textures: [[0, shadowDepthTexture]],
+        cullFace: gl.NONE,
+        depthTest: gl.NONE,
+    });
+
+    // =====================================================================
+    // Render Loop
+    // =====================================================================
+
+    const framebufferStack = new glance.FramebufferStack();
+
+    setRenderLoop(() => {
+        // Get a steadily increasing time value
+        const time = performance.now();
+
+        // Update the view
+        viewPos.set(0, 0, zoom).rotateX(tilt).rotateY(pan);
+        viewMatrix.lookAt(viewPos, origin, up);
+
+        // Update the light
+        lightPos
+            .set(0, 0, -1)
+            .rotateX(lightTilt)
+            .rotateY(time * lightRotationSpeed);
+        lightXform.lookAt(lightPos, origin, up);
+
+        // Render shadow map
+        framebufferStack.push(gl, shadowFramebuffer);
+        {
+            gl.clear(gl.DEPTH_BUFFER_BIT);
+            for (const drawCall of shadowDrawCalls)
+            {
+                glance.performDrawCall(gl, drawCall, time);
+            }
+        }
+        framebufferStack.pop(gl);
+
+        // Render the image
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+        if (0)
+        {
+            glance.performDrawCall(gl, debugDrawCall, time);
+        } else
+        {
+            glance.performDrawCall(gl, statueDrawCall, time);
+            glance.performDrawCall(gl, groundDrawCall, time);
+        }
+    });
+
+    // Game Code End ///////////////////////////////////////////////////////////
+</script>
+
+</html>

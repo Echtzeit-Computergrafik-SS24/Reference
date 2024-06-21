@@ -10,6 +10,7 @@
             margin: 0;
             padding: 0;
             overflow: hidden;
+            background-color: #191919;
         }
 
         canvas {
@@ -139,30 +140,27 @@
     let lastTime = 0;
     let averageDelta = 1000 / 60;
 
-    onKeyDown((e) =>
-    {
-        if (e.key === " ") {
+    onKeyDown((e) => {
+        if (e.key === " ")
+        {
             e.preventDefault();
             destroyCrates(lastTime);
         }
     });
 
-    onMouseDrag((e) =>
-    {
+    onMouseDrag((e) => {
         pan -= e.movementX * cameraSpeed;
         tilt = glance.clamp(tilt - e.movementY * cameraSpeed, Math.PI / -2, Math.PI / 2);
     });
 
-    onMouseWheel((e) =>
-    {
+    onMouseWheel((e) => {
         const factor = 1 + Math.sign(e.deltaY) * zoomSpeed;
         zoom = glance.clamp(zoom * factor, minZoom, maxZoom);
     });
 
     /// Resizing the viewport will update the projection matrix.
     const projectionMatrix = Mat4.perspective(fov, gl.canvas.width / gl.canvas.height, nearPlane, farPlane);
-    onResize(() =>
-    {
+    onResize(() => {
         projectionMatrix.perspective(fov, gl.canvas.width / gl.canvas.height, nearPlane, farPlane);
     });
 
@@ -479,27 +477,23 @@
     const phi = 2.399963229728653;
 
     // This is called a "Fibonacci Sphere" distribution.
-    function initial_position(id)
-    {
+    function initial_position(id) {
         const y = 1.0 - (id / Math.max(1.0, crateCount - 1.0)) * 2.0; // -1 to 1
         const radius = Math.sqrt(1.0 - y * y); // radius at y
         const angle = id * phi; // angle around the sphere
         return new Vec3(radius * Math.cos(angle), y, radius * Math.sin(angle));
     }
 
-    function random(seed)
-    {
+    function random(seed) {
         const x = Math.sin(seed) * 1.5453;
         return x - Math.floor(x);
     }
 
-    function randomRange(seed, min, max)
-    {
+    function randomRange(seed, min, max) {
         return min + random(seed) * (max - min);
     }
 
-    function randomAxis(seed)
-    {
+    function randomAxis(seed) {
         return new Vec3(
             randomRange(seed + 0.0, -1.0, 1.0),
             randomRange(seed + 1.0, -1.0, 1.0),
@@ -507,8 +501,7 @@
         ).normalize();
     }
 
-    function getCratePos(seed, time)
-    {
+    function getCratePos(seed, time) {
         const start = initial_position(seed);
         const axis = randomAxis(seed).cross(start).normalize();
         const angle = time * crateSpeed * randomRange(seed, 0.3, 1.0);
@@ -516,15 +509,16 @@
         return start.applyMat4(rotation);
     }
 
-    function destroyCrates(time)
-    {
+    function destroyCrates(time) {
         // The position of the "explosion" on the unit sphere.
         const surfacePos = viewPos.clone().normalize();
 
         // Only the crates outside the destruction radius will survive.
         const newCrates = [];
-        for (const crateIdx of crateIDs) {
-            if (getCratePos(crateIdx, time).distanceToSq(surfacePos) > destructionRadiusSq) {
+        for (const crateIdx of crateIDs)
+        {
+            if (getCratePos(crateIdx, time).distanceToSq(surfacePos) > destructionRadiusSq)
+            {
                 newCrates.push(crateIdx);
             }
         }
@@ -544,8 +538,7 @@
     // Render Loop
     // =====================================================================
 
-    setRenderLoop((time) =>
-    {
+    setRenderLoop((time) => {
         // Calculate and draw the fps
         averageDelta = averageDelta + (time - lastTime - averageDelta) / 20;
         lastTime = time;

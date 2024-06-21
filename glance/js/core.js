@@ -704,19 +704,19 @@ function createTexture(gl, name, width, height, target = TextureTarget.TEXTURE_2
     options.wipTextureUnit = getWIPTextureUnit(gl, options.wipTextureUnit);
     // Determine the number of levels to create.
     if (!isPowerOf2(width)) {
-        if (options.levels !== undefined) {
+        if (options.levels !== undefined && options.levels !== 1) {
             logWarning(() => `Ignoring given number of levels for ${kind} texture "${name}" because its width is not a power of two.`);
         }
         options.levels = 1;
     }
     else if (!isPowerOf2(height)) {
-        if (options.levels !== undefined) {
+        if (options.levels !== undefined && options.levels !== 1) {
             logWarning(() => `Ignoring given number of levels for ${kind} texture "${name}" because its height is not a power of two.`);
         }
         options.levels = 1;
     }
     else if (depth !== null && !isPowerOf2(depth)) {
-        if (options.levels !== undefined) {
+        if (options.levels !== undefined && options.levels !== 1) {
             logWarning(() => `Ignoring given number of levels for ${kind} texture "${name}" because its depth is not a power of two.`);
         }
         // TODO: I thought WebGL2 can handle non-power-of-two MIP maps?

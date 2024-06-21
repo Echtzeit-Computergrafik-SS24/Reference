@@ -478,8 +478,8 @@ function expandObj(objData, geometry) {
 /// @param path Location of the OBJ file.
 /// @returns The loaded Geometry.
 async function loadObj(path) {
-    // Load the OBJ file
-    const response = await fetch(path, {mode: "cors", method: "GET", headers: { "Content-Type": "text/plain" }});
+    // Load the OBJ file (add proper CORS headers to load from other domains)
+    const response = await fetch(path, { mode: "cors", method: "GET", headers: { "Content-Type": "text/plain" } });
     const text = await response.text();
     // Parse the OBJ file
     const objData = parseObj(text);
@@ -821,7 +821,8 @@ function computeTangents(positions, texCoords, indices, normals) {
             tz -= dot * nz;
             const length = Math.hypot(tx, ty, tz);
             if (length === 0) {
-                logWarning(() => `Cannot generate tangent for vertex ${i / 3} because it is not part of a face.`);
+                // TODO: re-enable warning once the unused-vertex issue is fixed
+                // logWarning(() => `Cannot generate tangent for vertex ${i / 3} because it is not part of a face.`);
                 continue;
             }
             tangents[i] = tx / length;
@@ -833,7 +834,7 @@ function computeTangents(positions, texCoords, indices, normals) {
         for (let i = 0; i < tangents.length; i += 3) {
             const length = Math.hypot(tangents[i], tangents[i + 1], tangents[i + 2]);
             if (length === 0) {
-                logWarning(() => `Cannot generate tangent for vertex ${i / 3} because it is not part of a face.`);
+                // logWarning(() => `Cannot generate tangent for vertex ${i / 3} because it is not part of a face.`);
                 continue;
             }
             tangents[i] /= length;

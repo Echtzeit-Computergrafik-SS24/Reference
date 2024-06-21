@@ -396,7 +396,7 @@ function createSphere(name: string, options: {
 /// @param bottom Bottom edge of the quad in NDC, default: -1.
 /// @returns
 function createScreenQuat(name: string, options: {
-    in2D?: boolean,
+    in2D?: boolean, // TODO: this should be the default
     left?: number,
     right?: number,
     top?: number,
@@ -635,7 +635,7 @@ function parseObj(text: string): ObjData
         }
     }
     if (name === undefined) {
-        throwError(() => "No object name defined in OBJ file");
+        throwError(() => `No object name defined in OBJ file: "${text}"`);
     }
     if (normals.length === 0) {
         console.log(`Calculating normals for object "${name}"`);
@@ -704,8 +704,8 @@ function expandObj(objData: ObjData, geometry: Geometry): void
 /// @returns The loaded Geometry.
 async function loadObj(path: string): Promise<Geometry>
 {
-    // Load the OBJ file
-    const response = await fetch(path);
+    // Load the OBJ file (add proper CORS headers to load from other domains)
+    const response = await fetch(path, { mode: "cors", method: "GET", headers: { "Content-Type": "text/plain" } });
     const text = await response.text();
 
     // Parse the OBJ file
@@ -1126,7 +1126,8 @@ function computeTangents(positions: Array<number>, texCoords: Array<number>, ind
             tz -= dot * nz;
             const length = Math.hypot(tx, ty, tz);
             if (length === 0) {
-                logWarning(() => `Cannot generate tangent for vertex ${i / 3} because it is not part of a face.`);
+                // TODO: re-enable warning once the unused-vertex issue is fixed
+                // logWarning(() => `Cannot generate tangent for vertex ${i / 3} because it is not part of a face.`);
                 continue;
             }
             tangents[i] = tx / length;
@@ -1138,7 +1139,7 @@ function computeTangents(positions: Array<number>, texCoords: Array<number>, ind
         for (let i = 0; i < tangents.length; i += 3) {
             const length = Math.hypot(tangents[i], tangents[i + 1], tangents[i + 2]);
             if (length === 0) {
-                logWarning(() => `Cannot generate tangent for vertex ${i / 3} because it is not part of a face.`);
+                // logWarning(() => `Cannot generate tangent for vertex ${i / 3} because it is not part of a face.`);
                 continue;
             }
             tangents[i] /= length;
