@@ -79,7 +79,7 @@ export var TextureSrcDataType;
     TextureSrcDataType[TextureSrcDataType["UNSIGNED_INT_10F_11F_11F_REV"] = 35899] = "UNSIGNED_INT_10F_11F_11F_REV";
     TextureSrcDataType[TextureSrcDataType["UNSIGNED_INT_24_8"] = 34042] = "UNSIGNED_INT_24_8";
     TextureSrcDataType[TextureSrcDataType["HALF_FLOAT"] = 5131] = "HALF_FLOAT";
-    TextureSrcDataType[TextureSrcDataType["FLOAT"] = 20] = "FLOAT";
+    TextureSrcDataType[TextureSrcDataType["FLOAT"] = 5126] = "FLOAT";
 })(TextureSrcDataType || (TextureSrcDataType = {}));
 /// Valid values for the internalFormat parameter of texStorage2D and texStorage3D.
 /// See https://developer.mozilla.org/en-US/docs/Web/API/WebGL2RenderingContext/texStorage2D#internalformat

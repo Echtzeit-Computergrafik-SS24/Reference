@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #191919;
+        }
+
+        canvas {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+        }
+    </style>
+</head>
+
+<body>
+    <canvas id="canvas" tabindex="0"></canvas>
+    <canvas id="hud" tabindex="0"></canvas>
+</body>
+
+<script type="module">
+    // Boilerplate code ////////////////////////////////////////////////////////
+
+    import * as glance from "../glance/js/index.js";
+    const { Vec2, Vec3, Mat4 } = glance;
+
+    // Get the WebGL context
+    const glCanvas = document.getElementById('canvas');
+    const hudCanvas = document.getElementById('hud');
+    const gl = glance.getContext(glCanvas);
+    const hud = hudCanvas.getContext('2d');
+
+    // Basic render loop wrapper.
+    function setRenderLoop(callback) {
+        function renderLoop(time) {
+            callback(time);
+            requestAnimationFrame(renderLoop);
+        }
+        requestAnimationFrame(renderLoop);
+    }
+
+    // Resize callback
+    let _resizeCallback = null;
+    function onResizeInternal() {
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+        glCanvas.width = width;
+        glCanvas.height = height;
+        hudCanvas.width = width;
+        hudCanvas.height = height;
+        gl.viewport(0, 0, width, height);
+        if (_resizeCallback)
+        {
+            _resizeCallback(width, height);
+        }
+    }
+    onResizeInternal();
+    window.addEventListener("resize", onResizeInternal);
+    function onResize(callback) {
+        _resizeCallback = callback;
+        _resizeCallback(window.innerWidth, window.innerHeight);
+    }
+
+    // Mouse event handling
+    function onMouseDrag(callback) {
+        let isDragging = null;
+        hudCanvas.addEventListener("mousedown", () => {
+            isDragging = true;
+        });
+        hudCanvas.addEventListener("mousemove", (e) => {
+            if (isDragging)
+            {
+                callback(e);
+            }
+        });
+        hudCanvas.addEventListener("mouseup", () => {
+            isDragging = false;
+        });
+    }
+
+    function onMouseWheel(callback) {
+        hudCanvas.addEventListener("wheel", (e) => {
+            e.preventDefault();
+            callback(e);
+        });
+    }
+
+    // Keyboard event handling
+    function onKeyDown(callback) {
+        window.addEventListener("keydown", (e) => {
+            callback(e);
+        });
+    }
+    function onKeyUp(callback) {
+        window.addEventListener("keyup", (e) => {
+            callback(e);
+        });
+    }
+
+    // Game Code Start /////////////////////////////////////////////////////////
+
+    gl.getExtension("EXT_color_buffer_float");
+
+    // =============================================================================
+    // Constants
+    // =============================================================================
+
+    // Globals
+    const origin = Vec3.zero();
+    const up = Vec3.yAxis();
+
+    // Camera
+    const fov = Math.PI / 4;
+    const nearPlane = 0.1;
+    const farPlane = 10;
+    const minZoom = 1.1;
+    const maxZoom = 3.0;
+    const minTilt = Math.PI / -2;
+    const maxTilt = Math.PI / 2;
+    const cameraSpeed = 0.007;
+    const zoomSpeed = 0.25;
+
+    // Scene
+    const volumeSize = 1;
+    const volumeResolution = 512;
+    const volumeSlices = 85;
+
+    // Material
+    const ambient = 0.3;
+    const diffuse = 0.6;
+    const specular = 0.5;
+    const shininess = 32.0;
+    const albedo = new Vec3(0.75, 0.1, 0.1);
+    const lightDir = new Vec3(1, 1, 1);
+
+    // =====================================================================
+    // World State
+    // =====================================================================
+
+    let pan = 0;
+    let tilt = 0;
+    let zoom = 4.5;
+    onMouseDrag((e) => {
+        pan -= e.movementX * cameraSpeed;
+        tilt = glance.clamp(tilt - e.movementY * cameraSpeed, minTilt, maxTilt);
+    });
+    onMouseWheel((e) => {
+        const factor = 1 + Math.sign(e.deltaY) * zoomSpeed;
+        zoom = glance.clamp(zoom * factor, minZoom, maxZoom);
+    });
+
+    const screenSize = new Vec2(gl.canvas.width, gl.canvas.height);
+    const projectionMatrix = Mat4.perspective(fov, screenSize.ratio, nearPlane, farPlane);
+    onResize(() => {
+        screenSize.set(gl.canvas.width, gl.canvas.height);
+        projectionMatrix.perspective(fov, screenSize.ratio, nearPlane, farPlane);
+    });
+
+    const modelMatrix = Mat4.identity();
+    const invModelMatrix = Mat4.identity();
+
+    const viewPos = Vec3.zero();
+    const viewMatrix = Mat4.identity();
+
+    // =====================================================================
+    // Volume
+    // =====================================================================
+
+    const volumeVSSource = `#version 300 es
+    precision highp float;
+
+    uniform mat4 u_modelMatrix;
+    uniform mat4 u_viewMatrix;
+    uniform mat4 u_projectionMatrix;
+
+    in vec3 a_pos;
+
+    out vec3 f_worldPos;
+
+    void main()
+    {
+        vec4 worldPos = u_modelMatrix * vec4(a_pos, 1.0);
+        f_worldPos = worldPos.xyz;
+        gl_Position = u_projectionMatrix * u_viewMatrix * worldPos;
+    }`;
+
+    const volumeFSSource = `#version 300 es
+    precision mediump float;
+    precision mediump sampler3D;
+
+    uniform highp mat4 u_modelMatrix;
+    uniform highp mat4 u_viewMatrix;
+    uniform highp mat4 u_projectionMatrix;
+    uniform float u_ambient;
+    uniform float u_diffuse;
+    uniform float u_specular;
+    uniform float u_shininess;
+    uniform vec3 u_albedo;
+    uniform mat4 u_invModelMatrix;
+    uniform vec3 u_viewPos;
+    uniform vec3 u_lightDir;
+    uniform mat4 u_volumeMatrix;
+    uniform mat4 u_invVolumeMatrix;
+    uniform sampler2D u_texMatCap;
+    uniform sampler3D u_texData;
+
+    in vec3 f_worldPos;
+
+    out vec4 o_fragColor;
+
+    // Constants.
+    const float EPSILON = 0.001;
+    const float MIN_STEP_LENGTH = 0.002;
+    const uint MAX_STEP_COUNT = 80u;
+
+    // Forward declarations.
+    bool marchRay(in vec3 rayDirection, out vec3 surfacePosition, out vec3 surfaceNormal);
+
+    void main() {
+        // Direction from the fragment to the view position.
+        vec3 viewDir = normalize(u_viewPos - f_worldPos);
+
+        // Use ray marching to find the surface position of the volume.
+        vec3 surfacePos, surfaceNormal;
+        if(!marchRay(viewDir, surfacePos, surfaceNormal)) {
+            discard;
+            // In case of failure, color the fragment a deep pink for debugging...
+            o_fragColor = vec4(1.0, 0.0, 1.0, 1.0);
+            // .. and place it at the near clipping plane.
+            gl_FragDepth = 0.0;
+            // This ends the execution of the fragment shader.
+            return;
+        }
+
+        // Determine the depth of the fragment.
+        // Manually transform the surface position from world space to clip space.
+        vec4 clipPos = u_projectionMatrix * u_viewMatrix * vec4(surfacePos, 1.0);
+        // Perspective divide.
+        float ndcDepth = clipPos.z / clipPos.w;
+        // The depth value must be in the range defined by gl_DepthRange.
+        gl_FragDepth = mix(gl_DepthRange.near, gl_DepthRange.far, (ndcDepth + 1.0) / 2.0);
+
+        vec3 matcapDir = reflect(viewDir, surfaceNormal);
+        float m = 2.0 * sqrt(pow(matcapDir.x, 2.0) + pow(matcapDir.y, 2.0) + pow(matcapDir.z + 1.0, 2.0));
+        vec3 matcap = texture(u_texMatCap, matcapDir.xy / m + .5).rgb;
+
+        // Use Blinn shading to compute the color of the fragment.
+        vec3 halfwayDir = normalize(u_lightDir + viewDir);
+        vec3 ambient = u_albedo * u_ambient;
+        vec3 diffuse =  max(dot(u_lightDir, surfaceNormal), 0.0) * u_albedo * u_diffuse;
+        vec3 specular = vec3(pow(max(dot(surfaceNormal, halfwayDir), 0.0), u_shininess) * u_specular);
+
+        // Output the final color.
+        o_fragColor = vec4(mix(ambient + diffuse + specular, matcap, (1.0 - diffuse) * u_ambient), 1);
+    }
+
+    float sampleVolume(in vec3 p) {
+        return texture(u_texData, p).r;
+    }
+
+    /// Returns false if p is outside the box (0,0,0) to (1,1,1)
+    bool notInUnitBox(in vec3 p) {
+        vec3 v = step(vec3(0), p) * step(p, vec3(1));
+        return v.x * v.y * v.z == 0.0;
+    }
+
+    /// Estimate the normal on the SDF surface at point p using the
+    /// tetrahedron technique from:
+    ///  https://iquilezles.org/articles/normalsSDF/
+    vec3 volumeNormal(in vec3 p) {
+        const vec2 k = vec2(1,-1);
+        return normalize(
+                k.xyy * sampleVolume(p + k.xyy * EPSILON) +
+                k.yyx * sampleVolume(p + k.yyx * EPSILON) +
+                k.yxy * sampleVolume(p + k.yxy * EPSILON) +
+                k.xxx * sampleVolume(p + k.xxx * EPSILON));
+    }
+
+    bool marchRay(in vec3 rayDirection, out vec3 surfacePosition, out vec3 surfaceNormal)
+    {
+        // Transform the ray direction from world space to model space.
+        rayDirection = normalize((u_volumeMatrix * u_invModelMatrix * vec4(rayDirection, 0.0)).xyz);
+
+        // The position of the fragment in normalized volume space.
+        vec3 entryPos = (u_volumeMatrix * u_invModelMatrix * vec4(f_worldPos, 1)).xyz;
+
+        // Start one step deep, otherwise we will get rounding errors
+        // when sampling a surface that is right on the boundary of
+        // the volume.
+        float depth = MIN_STEP_LENGTH;
+
+        // March along the ray until we find the surface or exit the volume.
+        // We use a fixed number of steps to avoid infinite loops.
+        for (uint stepCount = 0u; stepCount <= MAX_STEP_COUNT; stepCount++) {
+
+            // Advance through the volume along the ray direction.
+            vec3 samplePos = entryPos - rayDirection * depth;
+
+            // If the ray has exited the normalized sample volume, we are done.
+            if(notInUnitBox(samplePos)) {
+                // Discarding the fragment means that it won't affect the color of
+                // the pixel, nor will its depth be written to the depth buffer.
+                // This immediately ends the execution of the fragment shader.
+                discard;
+            }
+
+            // Sample the volume at the current position.
+            // Since we only use the red component of the volume texture, we can
+            // discard the others.
+            float sampleValue = sampleVolume(samplePos) / ${volumeResolution}.0;
+
+            // If the sample is negative, the ray has crossed the surface
+            if (sampleValue <= 0.0) {
+
+                // Update the depth one last time, further approaching
+                // the surface but now from within
+                depth += sampleValue;
+
+                // The surface position is the current sample position
+                vec3 volumePos = entryPos - rayDirection * depth;
+
+                // Transform the surface position from normalized volume space
+                // to world space.
+                surfacePosition = (u_modelMatrix * u_invVolumeMatrix * vec4(volumePos, 1)).xyz;
+
+                // The normal is estimated using the tetrahedron technique.
+                surfaceNormal = normalize((u_modelMatrix * u_invVolumeMatrix * vec4(volumeNormal(volumePos), 0)).xyz);
+
+                // We have found the surface, so we are done.
+                return true;
+            }
+
+            // If we did not find the surface yet, we know that we can advance
+            // the ray by at least the sample value before we hit the surface.
+            // However, no matter how small the smaple value is, we always increase
+            // the depth at least by some small (but not tiny) amount, in case we
+            // are asymptotically approaching the surface.
+            depth += max(sampleValue, MIN_STEP_LENGTH);
+        }
+
+        // We did not find the surface within the maximum number of steps,
+        // and neither did the ray exit the volume - this is a sign that
+        // MAX_STEP_COUNT is too low.
+        return false;
+    }`;
+
+    const volumeMatrix = Mat4.fromScale(1 / volumeSize)
+        .translate3(volumeSize / 2, volumeSize / 2, volumeSize / 2)
+        .rotateX(Math.PI / 2);
+    const u_invVolumeMatrix = volumeMatrix.clone().invert();
+
+    const volumeShader = glance.createShader(gl, "volume-shader", volumeVSSource, volumeFSSource, {
+        u_ambient: ambient,
+        u_diffuse: diffuse,
+        u_specular: specular,
+        u_shininess: shininess,
+        u_albedo: albedo,
+        u_lightDir: lightDir.normalize(),
+        u_volumeMatrix: volumeMatrix,
+        u_invVolumeMatrix: u_invVolumeMatrix,
+        u_texMatCap: 0,
+        u_texData: 1,
+    });
+
+    const volumeGeo = glance.createBox("volume-geo", {});
+    const volumeVAO = glance.createVAO(
+        gl,
+        "volume-vao",
+        glance.createIndexBuffer(gl, volumeGeo.indices),
+        glance.buildAttributeMap(volumeShader, [
+            glance.createAttributeBuffer(gl, "volume-abo", {
+                a_pos: { data: volumeGeo.positions, height: 3 },
+            }),
+        ]),
+    );
+
+    // Matcap texture
+    const matcapTexture = await glance.loadTextureNow(gl, "https://echtzeit-computergrafik-ss24.github.io/img/matcap-wax.webp");
+
+    // The 3D Texture containing the signed distance field.
+    const volumeTexture = await glance.loadDataVolumeNow(gl, "volume-data",
+        Array.from({ length: volumeSlices }, (_, i) => `https://echtzeit-computergrafik-ss24.github.io/img/skull_scan/sdf/${String(i).padStart(2, "0")}.png`), {
+        output_min: -12,
+        output_max: 304,
+    },
+    );
+
+    const volumesDrawCall = glance.createDrawCall(gl, volumeShader, volumeVAO, {
+        uniforms: {
+            u_modelMatrix: () => modelMatrix,
+            u_invModelMatrix: () => invModelMatrix,
+            u_viewPos: () => viewPos,
+            u_viewMatrix: () => viewMatrix,
+            u_projectionMatrix: () => projectionMatrix,
+        },
+        textures: [
+            [0, matcapTexture],
+            [1, volumeTexture],
+        ],
+        cullFace: gl.BACK,
+        depthTest: gl.LESS,
+    });
+
+    // =====================================================================
+    // Render Loop
+    // =====================================================================
+
+    setRenderLoop((time) => {
+        // Update the model
+        modelMatrix
+            .reset()
+            .rotateY(time * 0.00003)
+            .translateX(0.0);
+        invModelMatrix.copy(modelMatrix).invert();
+
+        // Update the view
+        viewPos.set(0, 0, zoom).rotateX(tilt).rotateY(pan);
+        viewMatrix.lookAt(viewPos, origin, up);
+
+        // Render the scene
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+        glance.performDrawCall(gl, volumesDrawCall, time);
+    });
+
+    // Game Code End ///////////////////////////////////////////////////////////
+</script>
+
+</html>

@@ -4,10 +4,7 @@
 
 
 /// The verbose code contains more and detailled log messages.
-const VERBOSE: boolean = import.meta.env.DEV || import.meta.env.SSR;
-if (import.meta.env.SSR) {
-    console.log(`Using glance in ${VERBOSE ? "verbose" : "silent"} mode.`);
-}
+const VERBOSE: boolean = true;
 
 
 /// Logs a message to the console if VERBOSE is true.

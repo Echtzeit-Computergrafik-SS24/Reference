@@ -980,47 +980,6 @@ function createTexture(
                 width,
                 height);
 
-            // It is perfectly valid to create a texture with a non-zero size but without any data.
-            // Firefox however produces a warning: "Tex ... is incurring lazy initialization." when doing so.
-            // Which, apparently, is correct but not actually an issue because the "fix" would be worse
-            // than the problem. See:
-            //  https://stackoverflow.com/a/57734917
-            // Still, I am developing on Firefox and I don't want to see warnings in the console, so glance
-            // will create a zeroed-out data array explicitly - but only in debug mode.
-            if (import.meta.env.DEV) {
-                if (options.internalFormat === TextureInternalFormat.RGBA8) {
-                    if (target === TextureTarget.TEXTURE_2D) {
-                        gl.texSubImage2D(
-                            target,
-                            0,
-                            0,
-                            0,
-                            width,
-                            height,
-                            gl.RGBA,
-                            gl.UNSIGNED_BYTE,
-                            new Uint8Array(width * height * 4) as any);
-                    }
-                    else {
-                        for (let i = 0; i < 6; ++i) {
-                            gl.texSubImage2D(
-                                gl.TEXTURE_CUBE_MAP_POSITIVE_X + i,
-                                0,
-                                0,
-                                0,
-                                width,
-                                height,
-                                gl.RGBA,
-                                gl.UNSIGNED_BYTE,
-                                new Uint8Array(width * height * 4) as any);
-                        }
-                    }
-                    if (options.levels > 1) {
-                        gl.generateMipmap(target);
-                    }
-                }
-            }
-
             // Enable depth texture comparison if requested.
             if (options.compareFunc ?? TextureCompareFunc.NONE !== TextureCompareFunc.NONE) {
                 gl.texParameteri(target, gl.TEXTURE_COMPARE_MODE, gl.COMPARE_REF_TO_TEXTURE);

@@ -172,7 +172,7 @@ export const enum TextureSrcDataType
     UNSIGNED_INT_10F_11F_11F_REV = 0x8C3B,
     UNSIGNED_INT_24_8 = 0x84FA,
     HALF_FLOAT = 0x140B,
-    FLOAT = 0x14,
+    FLOAT = 0x1406,
 }
 
 /// Valid values for the internalFormat parameter of texStorage2D and texStorage3D.
